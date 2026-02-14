@@ -6,9 +6,24 @@ import json
 from datetime import datetime
 import os
 
-config_path = os.path.join(os.path.dirname(__file__), "config.json")
-with open(config_path, "r") as f:
-    config = json.load(f)
+# ── Load config — supports both local config.json and Railway env vars ────
+def load_config():
+    """Load from environment variables (Railway) or fall back to config.json (local)."""
+    if os.environ.get("DISCORD_TOKEN"):
+        # Running on Railway — read from environment variables
+        return {
+            "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],
+            "SPREADSHEET_ID": os.environ["SPREADSHEET_ID"],
+            "LOG_CHANNEL_ID": int(os.environ["LOG_CHANNEL_ID"]),
+            "APPROVAL_CHANNEL_ID": int(os.environ["APPROVAL_CHANNEL_ID"]),
+        }
+    else:
+        # Running locally — read from config.json
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        with open(config_path, "r") as f:
+            return json.load(f)
+
+config = load_config()
 
 DISCORD_TOKEN = config["DISCORD_TOKEN"]
 SPREADSHEET_ID = config["SPREADSHEET_ID"]
@@ -16,17 +31,35 @@ LOG_CHANNEL_ID = config["LOG_CHANNEL_ID"]
 APPROVAL_CHANNEL_ID = config["APPROVAL_CHANNEL_ID"]
 
 # ── Google Sheets setup ─────────────────────────────────────────────────────
-credentials_path = os.path.join(os.path.dirname(__file__), "credentials.json")
-gc = gspread.service_account(filename=credentials_path)
+def get_gspread_client():
+    """Connect to Google Sheets via service account — supports env var or local file."""
+    if os.environ.get("GOOGLE_CREDENTIALS"):
+        # Railway — credentials stored as env var
+        creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
+        return gspread.service_account_from_dict(creds_dict)
+    else:
+        # Local — credentials.json file
+        credentials_path = os.path.join(os.path.dirname(__file__), "credentials.json")
+        return gspread.service_account(filename=credentials_path)
+
+gc = get_gspread_client()
 spreadsheet = gc.open_by_key(SPREADSHEET_ID)
 
 # The four sheets we care about (skip LOTUS LOGISTICS)
 SHEET_NAMES = ["MATERIALS&SUPPLIES", "EQUIPMENT", "FIREARMS", "MELEES"]
 
-# ── Cache for spreadsheet data ───────────────────────────────────────────────
-# We cache item data so we don't hit Google Sheets API limits on every interaction
-# Cache is refreshed when an approval goes through or manually
+# ── Points system ────────────────────────────────────────────────────────────
+POINTS_PER_UNIT = 2  # Only counted for additions, not subtractions
 
+def calculate_cart_points(cart):
+    """Calculate total points for a cart. Only additions count."""
+    total = 0
+    for entry in cart:
+        if entry["operation"] == "add":
+            total += entry["amount"] * POINTS_PER_UNIT
+    return total
+
+# ── Cache for spreadsheet data ───────────────────────────────────────────────
 item_cache = {}  # { sheet_name: [ {row, category, name, type, quantity, ...}, ... ] }
 
 def refresh_cache():
@@ -95,7 +128,6 @@ def get_items_in_category(sheet_name, category):
 
 
 # ── Per-user cart storage ────────────────────────────────────────────────────
-# { user_id: [ { sheet, category, name, row, operation, amount }, ... ] }
 user_carts = {}
 
 
@@ -123,7 +155,6 @@ tree = app_commands.CommandTree(bot)
 
 @tree.command(name="log", description="Inventory Adjustment Interface")
 async def log_command(interaction: discord.Interaction):
-    # Check if used in the correct channel
     if interaction.channel_id != LOG_CHANNEL_ID:
         await interaction.response.send_message(
             f"Please use this command in <#{LOG_CHANNEL_ID}>.",
@@ -159,10 +190,11 @@ class PageSelectView(View):
         select.callback = self.page_selected
         self.add_item(select)
 
-        # If user already has items in cart, show cart buttons
         if user.id in user_carts and user_carts[user.id]:
+            cart = user_carts[user.id]
+            points = calculate_cart_points(cart)
             cart_btn = Button(
-                label=f"📋 View Cart ({len(user_carts[user.id])} items)",
+                label=f"📋 View Cart ({len(cart)} items • {points} pts)",
                 style=discord.ButtonStyle.secondary,
                 custom_id="view_cart_from_page"
             )
@@ -218,7 +250,6 @@ class CategorySelectView(View):
         select.callback = self.category_selected
         self.add_item(select)
 
-        # Back button
         back_btn = Button(label="⬅ Back", style=discord.ButtonStyle.secondary, custom_id="back_to_page")
         back_btn.callback = self.go_back
         self.add_item(back_btn)
@@ -278,7 +309,6 @@ class ItemSelectView(View):
         select.callback = self.item_selected
         self.add_item(select)
 
-        # Back button
         back_btn = Button(label="⬅ Back", style=discord.ButtonStyle.secondary, custom_id="back_to_category")
         back_btn.callback = self.go_back
         self.add_item(back_btn)
@@ -371,7 +401,6 @@ class AmountModal(Modal):
         self.add_item(self.amount_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Validate the amount
         try:
             amount = int(self.amount_input.value)
             if amount <= 0:
@@ -385,7 +414,6 @@ class AmountModal(Modal):
             )
             return
 
-        # Check if subtraction would go negative
         if self.operation == "subtract" and amount > self.item["quantity"]:
             await interaction.response.send_message(
                 f"⚠️ Cannot subtract **{amount}** from **{self.item['name']}** "
@@ -394,7 +422,6 @@ class AmountModal(Modal):
             )
             return
 
-        # Add to cart
         if self.user.id not in user_carts:
             user_carts[self.user.id] = []
 
@@ -408,7 +435,6 @@ class AmountModal(Modal):
             "current_qty": self.item["quantity"],
         })
 
-        # Show cart with options to add more or submit
         view = CartView(self.user)
         await interaction.response.edit_message(
             content=view.get_cart_display(),
@@ -422,7 +448,7 @@ class AmountModal(Modal):
 
 class CartView(View):
     def __init__(self, user):
-        super().__init__(timeout=300)  # 5 min timeout for cart
+        super().__init__(timeout=300)
         self.user = user
 
         add_more_btn = Button(
@@ -459,12 +485,18 @@ class CartView(View):
             op_symbol = "+" if entry["operation"] == "add" else "-"
             new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
                 else entry["current_qty"] - entry["amount"]
+
+            # Show points per entry (only for additions)
+            entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
+            points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
+
             lines.append(
                 f"**{i}.** {entry['name']} ({entry['sheet']})\n"
-                f"   {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']})"
+                f"   {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
             )
 
-        lines.append(f"\n*{len(cart)} **pending adjustment entries**")
+        total_points = calculate_cart_points(cart)
+        lines.append(f"\n*{len(cart)} pending adjustment entries* • **Total: {total_points} points**")
         return "\n".join(lines)
 
     async def add_more(self, interaction: discord.Interaction):
@@ -482,7 +514,6 @@ class CartView(View):
             )
             return
 
-        # Show modal for optional note and video link before submitting
         modal = SubmitDetailsModal(interaction.user, cart.copy())
         await interaction.response.send_modal(modal)
 
@@ -528,6 +559,8 @@ class SubmitDetailsModal(Modal):
         note = self.note_input.value.strip() if self.note_input.value else ""
         video_link = self.video_input.value.strip() if self.video_input.value else ""
 
+        total_points = calculate_cart_points(self.cart)
+
         # Build the approval embed
         embed = discord.Embed(
             title="Log Request",
@@ -544,10 +577,14 @@ class SubmitDetailsModal(Modal):
             op_symbol = "+" if entry["operation"] == "add" else "-"
             new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
                 else entry["current_qty"] - entry["amount"]
+
+            entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
+            points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
+
             description_lines.append(
                 f"**{i}.** {entry['name']}\n"
                 f"   📁 {entry['sheet']} > {entry['category']}\n"
-                f"   📊 {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']})"
+                f"   📊 {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
             )
 
         embed.description = "\n\n".join(description_lines)
@@ -556,7 +593,10 @@ class SubmitDetailsModal(Modal):
         if note:
             embed.add_field(name="📝 Note", value=note, inline=False)
 
-        embed.set_footer(text=f"Requested by {interaction.user.display_name} • {len(self.cart)} item(s)")
+        # Add points to footer
+        embed.set_footer(
+            text=f"Requested by {interaction.user.display_name} • {len(self.cart)} item(s) • {total_points} points"
+        )
 
         # Unique request ID
         request_id = f"{interaction.user.id}_{int(datetime.utcnow().timestamp())}"
@@ -576,12 +616,10 @@ class SubmitDetailsModal(Modal):
             request_id=request_id
         )
 
-        # Send the embed first, then the video link as a separate message
-        # so Discord auto-embeds the video preview
         approval_msg = await approval_channel.send(embed=embed, view=approval_view)
         approval_view.message_id = approval_msg.id
 
-        # Send video link as a follow-up message so Discord renders the preview
+        # Send video link as a follow-up so Discord renders the preview
         if video_link:
             await approval_channel.send(
                 f"🎥 **Evidence video for the request above:**\n{video_link}"
@@ -606,7 +644,7 @@ class SubmitDetailsModal(Modal):
 
 class ApprovalView(View):
     def __init__(self, requester, cart, request_id):
-        super().__init__(timeout=None)  # No timeout for approval buttons
+        super().__init__(timeout=None)
         self.requester = requester
         self.cart = cart
         self.request_id = request_id
@@ -634,23 +672,19 @@ class ApprovalView(View):
         # Defer immediately — sheet updates take too long for Discord's 3s timeout
         await interaction.response.defer()
 
-        # Get the approver's highest role name
         highest_role = approver.top_role.name if approver.top_role else "Unknown"
 
-        # Update the Google Sheet
         try:
             today = datetime.utcnow().strftime("%d/%m/%Y")
 
             for entry in self.cart:
                 worksheet = spreadsheet.worksheet(entry["sheet"])
 
-                # Calculate new quantity
                 if entry["operation"] == "add":
                     new_qty = entry["current_qty"] + entry["amount"]
                 else:
                     new_qty = entry["current_qty"] - entry["amount"]
 
-                # Ensure non-negative
                 new_qty = max(0, new_qty)
 
                 # Update cells: H(merged with I) = quantity (col 8), J = date (col 10), K = approver (col 11)
@@ -658,7 +692,7 @@ class ApprovalView(View):
                 worksheet.update_cell(entry["row"], 10, today)        # Date
                 worksheet.update_cell(entry["row"], 11, highest_role) # Approver role
 
-                # Update supply status in Column F (index 6)
+                # Update supply status in Column F (col 6)
                 status = get_supply_status(new_qty)
                 worksheet.update_cell(entry["row"], 6, status)
 
@@ -682,7 +716,7 @@ class ApprovalView(View):
                     f"✅ Your entry request has been **approved**!"
                 )
             except discord.Forbidden:
-                pass  # User has DMs disabled
+                pass
 
         except Exception as e:
             await interaction.followup.send(
@@ -690,7 +724,6 @@ class ApprovalView(View):
             )
 
     async def reject(self, interaction: discord.Interaction):
-        # Show a modal asking for rejection reason
         modal = RejectReasonModal(self.requester, interaction.message, interaction.user)
         await interaction.response.send_modal(modal)
 
@@ -715,7 +748,6 @@ class RejectReasonModal(Modal):
         reason = self.reason_input.value or "No reason provided"
         highest_role = self.rejector.top_role.name if self.rejector.top_role else "Unknown"
 
-        # Update the embed to show rejection
         embed = self.original_message.embeds[0]
         embed.color = discord.Color.red()
         embed.add_field(
@@ -730,14 +762,13 @@ class RejectReasonModal(Modal):
 
         await interaction.response.edit_message(embed=embed, view=None)
 
-        # Notify the requester
         try:
             await self.requester.send(
                 f"❌ Your log request has been **rejected**.\n"
                 f"**Reason:** {reason}"
             )
         except discord.Forbidden:
-            pass  # User has DMs disabled
+            pass
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -767,14 +798,9 @@ async def refresh_command(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-
-    # Sync slash commands with Discord
     await tree.sync()
     print("Slash commands synced!")
-
-    # Load item cache
     refresh_cache()
-
     print("Bot is ready!")
 
 
