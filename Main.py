@@ -194,7 +194,7 @@ class PageSelectView(View):
             cart = user_carts[user.id]
             points = calculate_cart_points(cart)
             cart_btn = Button(
-                label=f"📋 View Cart ({len(cart)} items • {points} pts)",
+                label=f"📋 View Entries ({len(cart)} items • {points} pts)",
                 style=discord.ButtonStyle.secondary,
                 custom_id="view_cart_from_page"
             )
@@ -548,9 +548,9 @@ class SubmitDetailsModal(Modal):
         self.add_item(self.note_input)
 
         self.video_input = TextInput(
-            label="Video link (optional)",
+            label="Video link (required)",
             placeholder="Paste a YouTube, Streamable, Medal, etc. link...",
-            required=False,
+            required=True,
             max_length=500
         )
         self.add_item(self.video_input)
