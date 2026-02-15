@@ -677,24 +677,36 @@ class ApprovalView(View):
         try:
             today = datetime.utcnow().strftime("%d/%m/%Y")
 
+            # Group cart entries by sheet so we can batch update per sheet
+            entries_by_sheet = {}
             for entry in self.cart:
-                worksheet = spreadsheet.worksheet(entry["sheet"])
+                if entry["sheet"] not in entries_by_sheet:
+                    entries_by_sheet[entry["sheet"]] = []
+                entries_by_sheet[entry["sheet"]].append(entry)
 
-                if entry["operation"] == "add":
-                    new_qty = entry["current_qty"] + entry["amount"]
-                else:
-                    new_qty = entry["current_qty"] - entry["amount"]
+            for sheet_name, entries in entries_by_sheet.items():
+                worksheet = spreadsheet.worksheet(sheet_name)
 
-                new_qty = max(0, new_qty)
+                # Build a single batch of all cell updates for this sheet
+                batch_cells = []
+                for entry in entries:
+                    if entry["operation"] == "add":
+                        new_qty = entry["current_qty"] + entry["amount"]
+                    else:
+                        new_qty = entry["current_qty"] - entry["amount"]
 
-                # Update cells: H(merged with I) = quantity (col 8), J = date (col 10), K = approver (col 11)
-                worksheet.update_cell(entry["row"], 8, new_qty)       # Quantity
-                worksheet.update_cell(entry["row"], 10, today)        # Date
-                worksheet.update_cell(entry["row"], 11, highest_role) # Approver role
+                    new_qty = max(0, new_qty)
+                    status = get_supply_status(new_qty)
+                    row = entry["row"]
 
-                # Update supply status in Column F (col 6)
-                status = get_supply_status(new_qty)
-                worksheet.update_cell(entry["row"], 6, status)
+                    # F = supply status, H = quantity, J = date, K = approver
+                    batch_cells.append(gspread.Cell(row=row, col=6, value=status))
+                    batch_cells.append(gspread.Cell(row=row, col=8, value=new_qty))
+                    batch_cells.append(gspread.Cell(row=row, col=10, value=today))
+                    batch_cells.append(gspread.Cell(row=row, col=11, value=highest_role))
+
+                # One API call per sheet instead of 4 per item
+                worksheet.update_cells(batch_cells)
 
             # Update the embed to show it's approved
             embed = interaction.message.embeds[0]
