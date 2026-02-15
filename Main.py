@@ -10,7 +10,6 @@ import os
 def load_config():
     """Load from environment variables (Railway) or fall back to config.json (local)."""
     if os.environ.get("DISCORD_TOKEN"):
-        # Running on Railway — read from environment variables
         return {
             "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],
             "SPREADSHEET_ID": os.environ["SPREADSHEET_ID"],
@@ -18,7 +17,6 @@ def load_config():
             "APPROVAL_CHANNEL_ID": int(os.environ["APPROVAL_CHANNEL_ID"]),
         }
     else:
-        # Running locally — read from config.json
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         with open(config_path, "r") as f:
             return json.load(f)
@@ -34,22 +32,19 @@ APPROVAL_CHANNEL_ID = config["APPROVAL_CHANNEL_ID"]
 def get_gspread_client():
     """Connect to Google Sheets via service account — supports env var or local file."""
     if os.environ.get("GOOGLE_CREDENTIALS"):
-        # Railway — credentials stored as env var
         creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
         return gspread.service_account_from_dict(creds_dict)
     else:
-        # Local — credentials.json file
         credentials_path = os.path.join(os.path.dirname(__file__), "credentials.json")
         return gspread.service_account(filename=credentials_path)
 
 gc = get_gspread_client()
 spreadsheet = gc.open_by_key(SPREADSHEET_ID)
 
-# The four sheets we care about (skip LOTUS LOGISTICS)
 SHEET_NAMES = ["MATERIALS&SUPPLIES", "EQUIPMENT", "FIREARMS", "MELEES"]
 
 # ── Points system ────────────────────────────────────────────────────────────
-POINTS_PER_UNIT = 2  # Only counted for additions, not subtractions
+POINTS_PER_UNIT = 2
 
 def calculate_cart_points(cart):
     """Calculate total points for a cart. Only additions count."""
@@ -60,7 +55,7 @@ def calculate_cart_points(cart):
     return total
 
 # ── Cache for spreadsheet data ───────────────────────────────────────────────
-item_cache = {}  # { sheet_name: [ {row, category, name, type, quantity, ...}, ... ] }
+item_cache = {}
 
 def refresh_cache():
     """Pull all item data from the four sheets and cache it."""
@@ -74,30 +69,25 @@ def refresh_cache():
         items = []
         current_category = ""
 
-        # Rows 1-9 are headers (index 0-8), data starts at row 10 (index 9)
         for row_idx in range(9, len(all_values)):
             row = all_values[row_idx]
 
-            # Column C (index 2) = category - might be empty if merged
             if row[2].strip():
                 current_category = row[2].strip()
 
-            # Column D (index 3) = item name
             item_name = row[3].strip()
             if not item_name:
-                continue  # Skip empty rows
+                continue
 
-            # Column E (index 4) = item type
             item_type = row[4].strip()
 
-            # Column H+I merged (index 7) = quantity
             try:
                 quantity = int(row[7]) if row[7].strip() else 0
             except ValueError:
                 quantity = 0
 
             items.append({
-                "row": row_idx + 1,  # 1-indexed for Google Sheets API
+                "row": row_idx + 1,
                 "category": current_category,
                 "name": item_name,
                 "type": item_type,
@@ -109,8 +99,17 @@ def refresh_cache():
     print(f"Cache refreshed: {sum(len(v) for v in item_cache.values())} items loaded")
 
 
+def get_cached_quantity(sheet_name, row):
+    """Get the current cached quantity for a specific item by sheet and row."""
+    if sheet_name not in item_cache:
+        return 0
+    for item in item_cache[sheet_name]:
+        if item["row"] == row:
+            return item["quantity"]
+    return 0
+
+
 def get_categories(sheet_name):
-    """Get unique categories for a sheet."""
     if sheet_name not in item_cache:
         return []
     seen = []
@@ -121,7 +120,6 @@ def get_categories(sheet_name):
 
 
 def get_items_in_category(sheet_name, category):
-    """Get items within a specific category."""
     if sheet_name not in item_cache:
         return []
     return [item for item in item_cache[sheet_name] if item["category"] == category]
@@ -129,6 +127,11 @@ def get_items_in_category(sheet_name, category):
 
 # ── Per-user cart storage ────────────────────────────────────────────────────
 user_carts = {}
+
+# ── Pending approval requests ────────────────────────────────────────────────
+# Tracks all pending requests so we can update their embeds when quantities change
+# { request_id: { "view": ApprovalView, "message": discord.Message, "cart": [...], "requester": user } }
+pending_requests = {}
 
 
 # ── Supply status helper ────────────────────────────────────────────────────
@@ -141,6 +144,82 @@ def get_supply_status(quantity):
         return "✅ HIGH"
 
 
+def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
+    """Build an approval embed using current cached quantities."""
+    total_points = calculate_cart_points(cart)
+
+    embed = discord.Embed(
+        title="Log Request",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
+    embed.set_author(
+        name=requester_name,
+        icon_url=requester_avatar_url
+    )
+
+    description_lines = []
+    for i, entry in enumerate(cart, 1):
+        # Use the CURRENT cached quantity, not the stale one from submission time
+        current_qty = get_cached_quantity(entry["sheet"], entry["row"])
+
+        op_symbol = "+" if entry["operation"] == "add" else "-"
+        if entry["operation"] == "add":
+            new_qty = current_qty + entry["amount"]
+        else:
+            new_qty = current_qty - entry["amount"]
+
+        entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
+        points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
+
+        description_lines.append(
+            f"**{i}.** {entry['name']}\n"
+            f"   📁 {entry['sheet']} > {entry['category']}\n"
+            f"   📊 {current_qty} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
+        )
+
+    embed.description = "\n\n".join(description_lines)
+
+    if note:
+        embed.add_field(name="📝 Note", value=note, inline=False)
+
+    embed.set_footer(
+        text=f"Requested by {requester_name} • {len(cart)} item(s) • {total_points} points"
+    )
+
+    return embed
+
+
+async def update_pending_embeds(exclude_request_id=None):
+    """Update all pending approval embeds with current quantities from cache."""
+    to_remove = []
+
+    for req_id, req_data in pending_requests.items():
+        if req_id == exclude_request_id:
+            continue
+
+        try:
+            message = req_data["message"]
+            cart = req_data["cart"]
+            requester_name = req_data["requester_name"]
+            requester_avatar = req_data["requester_avatar"]
+            note = req_data.get("note", "")
+
+            # Rebuild the embed with fresh quantities
+            new_embed = build_approval_embed(cart, requester_name, requester_avatar, note)
+
+            # Preserve the existing view (approve/reject buttons)
+            await message.edit(embed=new_embed)
+
+        except (discord.NotFound, discord.HTTPException):
+            # Message was deleted or inaccessible — mark for removal
+            to_remove.append(req_id)
+
+    # Clean up any dead requests
+    for req_id in to_remove:
+        pending_requests.pop(req_id, None)
+
+
 # ── Discord Bot setup ───────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.members = True
@@ -150,7 +229,7 @@ tree = app_commands.CommandTree(bot)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  STEP 1: /log command — starts the flow with a page (sheet) selector
+#  STEP 1: /log command
 # ════════════════════════════════════════════════════════════════════════════
 
 @tree.command(name="log", description="Inventory Adjustment Interface")
@@ -194,7 +273,7 @@ class PageSelectView(View):
             cart = user_carts[user.id]
             points = calculate_cart_points(cart)
             cart_btn = Button(
-                label=f"📋 View Entries ({len(cart)} items • {points} pts)",
+                label=f"📋 View Cart ({len(cart)} items • {points} pts)",
                 style=discord.ButtonStyle.secondary,
                 custom_id="view_cart_from_page"
             )
@@ -320,7 +399,7 @@ class ItemSelectView(View):
         view = OperationSelectView(self.user, self.sheet_name, self.category, item)
         await interaction.response.edit_message(
             content=(
-                f"**{self.sheet_name}** > **{self.category}** > **{item['name']}**\n"
+                f"📦 **{self.sheet_name}** > **{self.category}** > **{item['name']}**\n"
                 f"Current quantity: **{item['quantity']}**\n\n"
                 f"Select operation:"
             ),
@@ -331,7 +410,7 @@ class ItemSelectView(View):
         categories = get_categories(self.sheet_name)
         view = CategorySelectView(self.user, self.sheet_name, categories)
         await interaction.response.edit_message(
-            content=f"**{self.sheet_name}** — Select a category:",
+            content=f"📦 **{self.sheet_name}** — Select a category:",
             view=view
         )
 
@@ -486,7 +565,6 @@ class CartView(View):
             new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
                 else entry["current_qty"] - entry["amount"]
 
-            # Show points per entry (only for additions)
             entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
             points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
 
@@ -548,9 +626,9 @@ class SubmitDetailsModal(Modal):
         self.add_item(self.note_input)
 
         self.video_input = TextInput(
-            label="Video link (required)",
+            label="Video link (optional)",
             placeholder="Paste a YouTube, Streamable, Medal, etc. link...",
-            required=True,
+            required=False,
             max_length=500
         )
         self.add_item(self.video_input)
@@ -559,44 +637,11 @@ class SubmitDetailsModal(Modal):
         note = self.note_input.value.strip() if self.note_input.value else ""
         video_link = self.video_input.value.strip() if self.video_input.value else ""
 
-        total_points = calculate_cart_points(self.cart)
+        requester_name = interaction.user.display_name
+        requester_avatar = interaction.user.display_avatar.url
 
-        # Build the approval embed
-        embed = discord.Embed(
-            title="Log Request",
-            color=discord.Color.orange(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_author(
-            name=interaction.user.display_name,
-            icon_url=interaction.user.display_avatar.url
-        )
-
-        description_lines = []
-        for i, entry in enumerate(self.cart, 1):
-            op_symbol = "+" if entry["operation"] == "add" else "-"
-            new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
-                else entry["current_qty"] - entry["amount"]
-
-            entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
-            points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
-
-            description_lines.append(
-                f"**{i}.** {entry['name']}\n"
-                f"   📁 {entry['sheet']} > {entry['category']}\n"
-                f"   📊 {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
-            )
-
-        embed.description = "\n\n".join(description_lines)
-
-        # Add note field if provided
-        if note:
-            embed.add_field(name="📝 Note", value=note, inline=False)
-
-        # Add points to footer
-        embed.set_footer(
-            text=f"Requested by {interaction.user.display_name} • {len(self.cart)} item(s) • {total_points} points"
-        )
+        # Build the embed using current cached quantities
+        embed = build_approval_embed(self.cart, requester_name, requester_avatar, note)
 
         # Unique request ID
         request_id = f"{interaction.user.id}_{int(datetime.utcnow().timestamp())}"
@@ -618,6 +663,16 @@ class SubmitDetailsModal(Modal):
 
         approval_msg = await approval_channel.send(embed=embed, view=approval_view)
         approval_view.message_id = approval_msg.id
+
+        # Register in pending requests for live updates
+        pending_requests[request_id] = {
+            "view": approval_view,
+            "message": approval_msg,
+            "cart": self.cart,
+            "requester_name": requester_name,
+            "requester_avatar": requester_avatar,
+            "note": note,
+        }
 
         # Send video link as a follow-up so Discord renders the preview
         if video_link:
@@ -677,7 +732,7 @@ class ApprovalView(View):
         try:
             today = datetime.utcnow().strftime("%d/%m/%Y")
 
-            # Group cart entries by sheet so we can batch update per sheet
+            # Group cart entries by sheet for batch updates
             entries_by_sheet = {}
             for entry in self.cart:
                 if entry["sheet"] not in entries_by_sheet:
@@ -687,25 +742,25 @@ class ApprovalView(View):
             for sheet_name, entries in entries_by_sheet.items():
                 worksheet = spreadsheet.worksheet(sheet_name)
 
-                # Build a single batch of all cell updates for this sheet
                 batch_cells = []
                 for entry in entries:
+                    # Use CURRENT quantity from cache, not stale value from submission
+                    current_qty = get_cached_quantity(entry["sheet"], entry["row"])
+
                     if entry["operation"] == "add":
-                        new_qty = entry["current_qty"] + entry["amount"]
+                        new_qty = current_qty + entry["amount"]
                     else:
-                        new_qty = entry["current_qty"] - entry["amount"]
+                        new_qty = current_qty - entry["amount"]
 
                     new_qty = max(0, new_qty)
                     status = get_supply_status(new_qty)
                     row = entry["row"]
 
-                    # F = supply status, H = quantity, J = date, K = approver
                     batch_cells.append(gspread.Cell(row=row, col=6, value=status))
                     batch_cells.append(gspread.Cell(row=row, col=8, value=new_qty))
                     batch_cells.append(gspread.Cell(row=row, col=10, value=today))
                     batch_cells.append(gspread.Cell(row=row, col=11, value=highest_role))
 
-                # One API call per sheet instead of 4 per item
                 worksheet.update_cells(batch_cells)
 
             # Update the embed to show it's approved
@@ -719,8 +774,14 @@ class ApprovalView(View):
 
             await interaction.edit_original_response(embed=embed, view=None)
 
-            # Refresh cache after update
+            # Remove this request from pending
+            pending_requests.pop(self.request_id, None)
+
+            # Refresh cache with new quantities from the sheet
             refresh_cache()
+
+            # Update all other pending request embeds with fresh quantities
+            await update_pending_embeds()
 
             # Notify the requester
             try:
@@ -736,16 +797,17 @@ class ApprovalView(View):
             )
 
     async def reject(self, interaction: discord.Interaction):
-        modal = RejectReasonModal(self.requester, interaction.message, interaction.user)
+        modal = RejectReasonModal(self.requester, interaction.message, interaction.user, self.request_id)
         await interaction.response.send_modal(modal)
 
 
 class RejectReasonModal(Modal):
-    def __init__(self, requester, message, rejector):
+    def __init__(self, requester, message, rejector, request_id):
         super().__init__(title="Rejection Reason")
         self.requester = requester
         self.original_message = message
         self.rejector = rejector
+        self.request_id = request_id
 
         self.reason_input = TextInput(
             label="Reason for rejection",
@@ -774,6 +836,9 @@ class RejectReasonModal(Modal):
 
         await interaction.response.edit_message(embed=embed, view=None)
 
+        # Remove from pending requests
+        pending_requests.pop(self.request_id, None)
+
         try:
             await self.requester.send(
                 f"❌ Your log request has been **rejected**.\n"
@@ -784,7 +849,7 @@ class RejectReasonModal(Modal):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  STEP 8: /refresh command — manually refresh cache
+#  STEP 8: /refresh command
 # ════════════════════════════════════════════════════════════════════════════
 
 @tree.command(name="refresh", description="Refresh the item cache from Google Sheets")
@@ -816,5 +881,4 @@ async def on_ready():
     print("Bot is ready!")
 
 
-# ── Run the bot ─────────────────────────────────────────────────────────────
 bot.run(DISCORD_TOKEN)
