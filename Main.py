@@ -399,7 +399,7 @@ class ItemSelectView(View):
         view = OperationSelectView(self.user, self.sheet_name, self.category, item)
         await interaction.response.edit_message(
             content=(
-                f"📦 **{self.sheet_name}** > **{self.category}** > **{item['name']}**\n"
+                f"**{self.sheet_name}** > **{self.category}** > **{item['name']}**\n"
                 f"Current quantity: **{item['quantity']}**\n\n"
                 f"Select operation:"
             ),
@@ -410,7 +410,7 @@ class ItemSelectView(View):
         categories = get_categories(self.sheet_name)
         view = CategorySelectView(self.user, self.sheet_name, categories)
         await interaction.response.edit_message(
-            content=f"📦 **{self.sheet_name}** — Select a category:",
+            content=f"**{self.sheet_name}** — Select a category:",
             view=view
         )
 
@@ -454,7 +454,7 @@ class OperationSelectView(View):
         items = get_items_in_category(self.sheet_name, self.category)
         view = ItemSelectView(self.user, self.sheet_name, self.category, items)
         await interaction.response.edit_message(
-            content=f"📦 **{self.sheet_name}** > **{self.category}** — Select an item:",
+            content=f"**{self.sheet_name}** > **{self.category}** — Select an item:",
             view=view
         )
 
