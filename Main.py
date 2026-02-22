@@ -3,8 +3,9 @@ from discord import app_commands
 from discord.ui import View, Select, Button, Modal, TextInput
 import gspread
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import asyncio
 
 # ── Load config — supports both local config.json and Railway env vars ────
 def load_config():
@@ -27,6 +28,11 @@ DISCORD_TOKEN = config["DISCORD_TOKEN"]
 SPREADSHEET_ID = config["SPREADSHEET_ID"]
 LOG_CHANNEL_ID = config["LOG_CHANNEL_ID"]
 APPROVAL_CHANNEL_ID = config["APPROVAL_CHANNEL_ID"]
+
+# ── Cleanup settings ────────────────────────────────────────────────────────
+PENDING_REQUEST_TIMEOUT_DAYS = 7
+CART_TIMEOUT_HOURS = 2
+CLEANUP_INTERVAL_MINUTES = 30
 
 # ── Google Sheets setup ─────────────────────────────────────────────────────
 def get_gspread_client():
@@ -126,11 +132,11 @@ def get_items_in_category(sheet_name, category):
 
 
 # ── Per-user cart storage ────────────────────────────────────────────────────
+# { user_id: { "cart": [...], "last_updated": datetime } }
 user_carts = {}
 
 # ── Pending approval requests ────────────────────────────────────────────────
-# Tracks all pending requests so we can update their embeds when quantities change
-# { request_id: { "view": ApprovalView, "message": discord.Message, "cart": [...], "requester": user } }
+# { request_id: { "view", "message", "cart", "requester", "requester_name", "requester_avatar", "note", "created_at" } }
 pending_requests = {}
 
 
@@ -160,7 +166,6 @@ def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
 
     description_lines = []
     for i, entry in enumerate(cart, 1):
-        # Use the CURRENT cached quantity, not the stale one from submission time
         current_qty = get_cached_quantity(entry["sheet"], entry["row"])
 
         op_symbol = "+" if entry["operation"] == "add" else "-"
@@ -205,26 +210,127 @@ async def update_pending_embeds(exclude_request_id=None):
             requester_avatar = req_data["requester_avatar"]
             note = req_data.get("note", "")
 
-            # Rebuild the embed with fresh quantities
             new_embed = build_approval_embed(cart, requester_name, requester_avatar, note)
-
-            # Preserve the existing view (approve/reject buttons)
             await message.edit(embed=new_embed)
 
         except (discord.NotFound, discord.HTTPException):
-            # Message was deleted or inaccessible — mark for removal
             to_remove.append(req_id)
 
-    # Clean up any dead requests
     for req_id in to_remove:
         pending_requests.pop(req_id, None)
+
+
+# ── Cleanup task ─────────────────────────────────────────────────────────────
+async def cleanup_loop():
+    """Periodically clean up expired pending requests and stale carts."""
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        try:
+            now = datetime.utcnow()
+
+            # ── Expire old pending requests ──
+            expired_requests = []
+            for req_id, req_data in list(pending_requests.items()):
+                created_at = req_data.get("created_at", now)
+                if now - created_at > timedelta(days=PENDING_REQUEST_TIMEOUT_DAYS):
+                    expired_requests.append(req_id)
+
+            for req_id in expired_requests:
+                req_data = pending_requests.pop(req_id, None)
+                if not req_data:
+                    continue
+
+                # Update the approval embed to show timeout
+                try:
+                    message = req_data["message"]
+                    embed = message.embeds[0] if message.embeds else None
+
+                    if embed:
+                        embed.color = discord.Color.dark_grey()
+                        embed.add_field(
+                            name="⏰ Timed Out",
+                            value=f"This request expired after {PENDING_REQUEST_TIMEOUT_DAYS} days without a response.\n{now.strftime('%d/%m/%Y %H:%M UTC')}",
+                            inline=False
+                        )
+                        await message.edit(embed=embed, view=None)
+
+                except (discord.NotFound, discord.HTTPException):
+                    pass  # Message already deleted
+
+                # Notify the requester
+                try:
+                    requester = req_data.get("requester")
+                    if requester:
+                        await requester.send(
+                            f"⏰ Your log request has **timed out** after {PENDING_REQUEST_TIMEOUT_DAYS} days without approval or rejection.\n"
+                            f"Please submit a new request if still needed."
+                        )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+            if expired_requests:
+                print(f"Cleanup: expired {len(expired_requests)} pending request(s)")
+
+            # ── Clear stale user carts ──
+            stale_carts = []
+            for user_id, cart_data in list(user_carts.items()):
+                last_updated = cart_data.get("last_updated", now)
+                if now - last_updated > timedelta(hours=CART_TIMEOUT_HOURS):
+                    stale_carts.append(user_id)
+
+            for user_id in stale_carts:
+                user_carts.pop(user_id, None)
+
+            if stale_carts:
+                print(f"Cleanup: cleared {len(stale_carts)} stale cart(s)")
+
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
+        await asyncio.sleep(CLEANUP_INTERVAL_MINUTES * 60)
+
+
+# ── Cart helper functions ────────────────────────────────────────────────────
+def get_user_cart(user_id):
+    """Get a user's cart items, or empty list."""
+    data = user_carts.get(user_id)
+    if data is None:
+        return []
+    return data.get("cart", [])
+
+
+def set_user_cart(user_id, cart):
+    """Set a user's cart and update the timestamp."""
+    user_carts[user_id] = {
+        "cart": cart,
+        "last_updated": datetime.utcnow(),
+    }
+
+
+def clear_user_cart(user_id):
+    """Remove a user's cart entirely."""
+    user_carts.pop(user_id, None)
+
+
+def append_to_user_cart(user_id, entry):
+    """Add an item to a user's cart."""
+    data = user_carts.get(user_id)
+    if data is None:
+        user_carts[user_id] = {
+            "cart": [entry],
+            "last_updated": datetime.utcnow(),
+        }
+    else:
+        data["cart"].append(entry)
+        data["last_updated"] = datetime.utcnow()
 
 
 # ── Discord Bot setup ───────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.members = True
 
-bot = discord.Client(intents=intents)
+bot = discord.Client(intents=intents, max_messages=100)  # Limit internal message cache
 tree = app_commands.CommandTree(bot)
 
 
@@ -269,11 +375,11 @@ class PageSelectView(View):
         select.callback = self.page_selected
         self.add_item(select)
 
-        if user.id in user_carts and user_carts[user.id]:
-            cart = user_carts[user.id]
+        cart = get_user_cart(user.id)
+        if cart:
             points = calculate_cart_points(cart)
             cart_btn = Button(
-                label=f"📋 View Cart ({len(cart)} items • {points} pts)",
+                label=f"📋 View Log ({len(cart)} entries • {points} pts)",
                 style=discord.ButtonStyle.secondary,
                 custom_id="view_cart_from_page"
             )
@@ -501,10 +607,7 @@ class AmountModal(Modal):
             )
             return
 
-        if self.user.id not in user_carts:
-            user_carts[self.user.id] = []
-
-        user_carts[self.user.id].append({
+        append_to_user_cart(self.user.id, {
             "sheet": self.sheet_name,
             "category": self.category,
             "name": self.item["name"],
@@ -555,7 +658,7 @@ class CartView(View):
         self.add_item(clear_btn)
 
     def get_cart_display(self):
-        cart = user_carts.get(self.user.id, [])
+        cart = get_user_cart(self.user.id)
         if not cart:
             return "No pending inventory adjustments."
 
@@ -585,7 +688,7 @@ class CartView(View):
         )
 
     async def submit_cart(self, interaction: discord.Interaction):
-        cart = user_carts.get(self.user.id, [])
+        cart = get_user_cart(self.user.id)
         if not cart:
             await interaction.response.edit_message(
                 content="⚠️ No pending inventory adjustments!", view=None
@@ -596,7 +699,7 @@ class CartView(View):
         await interaction.response.send_modal(modal)
 
     async def clear_cart(self, interaction: discord.Interaction):
-        user_carts[self.user.id] = []
+        clear_user_cart(self.user.id)
         await interaction.response.edit_message(
             content="Entries cleared.",
             view=None
@@ -640,13 +743,10 @@ class SubmitDetailsModal(Modal):
         requester_name = interaction.user.display_name
         requester_avatar = interaction.user.display_avatar.url
 
-        # Build the embed using current cached quantities
         embed = build_approval_embed(self.cart, requester_name, requester_avatar, note)
 
-        # Unique request ID
         request_id = f"{interaction.user.id}_{int(datetime.utcnow().timestamp())}"
 
-        # Send to approval channel
         approval_channel = bot.get_channel(APPROVAL_CHANNEL_ID)
         if not approval_channel:
             await interaction.response.send_message(
@@ -664,24 +764,24 @@ class SubmitDetailsModal(Modal):
         approval_msg = await approval_channel.send(embed=embed, view=approval_view)
         approval_view.message_id = approval_msg.id
 
-        # Register in pending requests for live updates
+        # Register in pending requests with timestamp for cleanup
         pending_requests[request_id] = {
             "view": approval_view,
             "message": approval_msg,
             "cart": self.cart,
+            "requester": interaction.user,
             "requester_name": requester_name,
             "requester_avatar": requester_avatar,
             "note": note,
+            "created_at": datetime.utcnow(),
         }
 
-        # Send video link as a follow-up so Discord renders the preview
         if video_link:
             await approval_channel.send(
                 f"🎥 **Evidence video for the request above:**\n{video_link}"
             )
 
-        # Clear the user's cart
-        user_carts[self.user.id] = []
+        clear_user_cart(self.user.id)
 
         await interaction.response.edit_message(
             content=(
@@ -724,7 +824,6 @@ class ApprovalView(View):
     async def approve(self, interaction: discord.Interaction):
         approver = interaction.user
 
-        # Defer immediately — sheet updates take too long for Discord's 3s timeout
         await interaction.response.defer()
 
         highest_role = approver.top_role.name if approver.top_role else "Unknown"
@@ -732,7 +831,6 @@ class ApprovalView(View):
         try:
             today = datetime.utcnow().strftime("%d/%m/%Y")
 
-            # Group cart entries by sheet for batch updates
             entries_by_sheet = {}
             for entry in self.cart:
                 if entry["sheet"] not in entries_by_sheet:
@@ -744,7 +842,6 @@ class ApprovalView(View):
 
                 batch_cells = []
                 for entry in entries:
-                    # Use CURRENT quantity from cache, not stale value from submission
                     current_qty = get_cached_quantity(entry["sheet"], entry["row"])
 
                     if entry["operation"] == "add":
@@ -763,7 +860,6 @@ class ApprovalView(View):
 
                 worksheet.update_cells(batch_cells)
 
-            # Update the embed to show it's approved
             embed = interaction.message.embeds[0]
             embed.color = discord.Color.green()
             embed.add_field(
@@ -774,16 +870,12 @@ class ApprovalView(View):
 
             await interaction.edit_original_response(embed=embed, view=None)
 
-            # Remove this request from pending
             pending_requests.pop(self.request_id, None)
 
-            # Refresh cache with new quantities from the sheet
             refresh_cache()
 
-            # Update all other pending request embeds with fresh quantities
             await update_pending_embeds()
 
-            # Notify the requester
             try:
                 await self.requester.send(
                     f"✅ Your entry request has been **approved**!"
@@ -836,7 +928,6 @@ class RejectReasonModal(Modal):
 
         await interaction.response.edit_message(embed=embed, view=None)
 
-        # Remove from pending requests
         pending_requests.pop(self.request_id, None)
 
         try:
@@ -878,6 +969,10 @@ async def on_ready():
     await tree.sync()
     print("Slash commands synced!")
     refresh_cache()
+
+    # Start the cleanup loop
+    bot.loop.create_task(cleanup_loop())
+
     print("Bot is ready!")
 
 
