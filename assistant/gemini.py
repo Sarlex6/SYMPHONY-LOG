@@ -27,18 +27,29 @@ async def generate_response(user_name, user_message, conversation_history=None, 
     system_parts = [SYSTEM_PROMPT, "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE]
 
     if memory_summary:
-        system_parts.append(f"\nMEMORY OF PAST INTERACTIONS WITH {user_name.upper()}:\n{memory_summary}")
+        system_parts.append(f"\nMEMORY OF PAST INTERACTIONS WITH {user_name.upper()} (background context only — prioritize the current channel conversation over this):\n{memory_summary}")
+
+    # Add per-user conversation history as background memory in system prompt
+    if conversation_history:
+        history_lines = [f"\nYOUR RECENT DIRECT EXCHANGES WITH {user_name.upper()} (for reference only — the channel messages below are more current):"]
+        for msg in conversation_history[-10:]:  # Only last 10 to keep system prompt reasonable
+            speaker = user_name if msg["role"] == "user" else "You (Angela)"
+            text = msg["text"][:200]
+            history_lines.append(f"  {speaker}: {text}")
+        system_parts.append("\n".join(history_lines))
 
     system_instruction = "\n".join(system_parts)
 
     # Build conversation contents
     contents = []
 
-    # Add channel context as the first user message so the AI knows what's been discussed
+    # Channel context is the PRIMARY conversational context
     if channel_context:
         context_lines = [
             "[RECENT CHANNEL MESSAGES — listed oldest to newest. "
-            "Use this to understand the ongoing conversation. "
+            "This is what is CURRENTLY being discussed. "
+            "When a user asks 'what do you think' or similar vague questions, "
+            "refer to the most recent messages in this list for context. "
             "Messages from different users may be interleaved.]"
         ]
         for i, msg in enumerate(channel_context, 1):
@@ -56,16 +67,8 @@ async def generate_response(user_name, user_message, conversation_history=None, 
         })
         contents.append({
             "role": "model",
-            "parts": [{"text": "Understood. I've reviewed the recent channel activity and I know what each person said."}]
+            "parts": [{"text": "Understood. I've reviewed the recent channel messages and I know what's currently being discussed."}]
         })
-
-    # Add recent per-user conversation history
-    if conversation_history:
-        for msg in conversation_history:
-            contents.append({
-                "role": msg["role"],
-                "parts": [{"text": msg["text"]}]
-            })
 
     # Build the current user message with reply context
     current_message_parts = []
