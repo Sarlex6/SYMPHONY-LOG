@@ -151,15 +151,10 @@ async def on_message(message):
     # Fetch recent channel messages for context
     channel_context = await _get_channel_context(message)
 
-    # If the message is empty (just a mention), find the user's most recent message
-    # from the channel context and use that as the query
+    # If the message is empty (just a mention), let Angela read the channel context
+    # and decide what to respond to
     if not user_text:
-        for msg in reversed(channel_context):
-            if msg["author"] == user_name and not msg["is_angela"]:
-                user_text = msg["content"]
-                break
-        if not user_text:
-            user_text = "[empty message]"
+        user_text = "[This user mentioned you without a specific message. Read the recent channel messages and respond to what's being discussed.]"
 
     # Get conversation memory
     memory_summary = get_memory_summary(user_id)
