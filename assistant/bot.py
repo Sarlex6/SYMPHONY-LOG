@@ -86,9 +86,15 @@ async def _get_channel_context(message):
             author_name = msg.author.display_name
             is_bot = msg.author == bot.user
 
+            # Clean up the message content — replace raw mentions with display names
+            content = msg.content
+            for user_mention in msg.mentions:
+                content = content.replace(f"<@{user_mention.id}>", f"@{user_mention.display_name}")
+                content = content.replace(f"<@!{user_mention.id}>", f"@{user_mention.display_name}")
+
             entry = {
                 "author": author_name,
-                "content": msg.content[:300],  # Truncate long messages
+                "content": content[:300],  # Truncate long messages
                 "is_angela": is_bot,
             }
 
