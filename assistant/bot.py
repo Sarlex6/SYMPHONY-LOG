@@ -137,8 +137,6 @@ async def on_message(message):
 
     # Clean the message text
     user_text = _clean_mention(message.content)
-    if not user_text:
-        user_text = "[empty message]"
 
     user_name = message.author.display_name
     user_id = message.author.id
@@ -148,6 +146,16 @@ async def on_message(message):
 
     # Fetch recent channel messages for context
     channel_context = await _get_channel_context(message)
+
+    # If the message is empty (just a mention), find the user's most recent message
+    # from the channel context and use that as the query
+    if not user_text:
+        for msg in reversed(channel_context):
+            if msg["author"] == user_name and not msg["is_angela"]:
+                user_text = msg["content"]
+                break
+        if not user_text:
+            user_text = "[empty message]"
 
     # Get conversation memory
     memory_summary = get_memory_summary(user_id)
