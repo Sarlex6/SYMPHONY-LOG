@@ -6,6 +6,7 @@ from assistant.memory import (
     add_message, get_history, get_memory_summary, cleanup_memories,
     load_from_disk, save_to_disk, SAVE_INTERVAL_MINUTES,
 )
+from assistant.knowledge import load_knowledge
 
 # ── Discord Bot setup ───────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -122,6 +123,9 @@ async def on_ready():
 
     # Load saved memory from disk
     load_from_disk()
+
+    # Load knowledge files
+    load_knowledge()
 
     # Start background loops
     bot.loop.create_task(_memory_cleanup_loop())

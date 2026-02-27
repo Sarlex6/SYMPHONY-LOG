@@ -3,6 +3,7 @@ import asyncio
 import json
 from config import config
 from assistant.persona import SYSTEM_PROMPT, STATIC_KNOWLEDGE
+from assistant.knowledge import get_relevant_knowledge
 
 GEMINI_API_KEY = config.get("GEMINI_API_KEY", "")
 PRIMARY_MODEL = "gemini-2.5-flash-lite"
@@ -25,6 +26,17 @@ async def generate_response(user_name, user_message, conversation_history=None, 
 
     # Build system instruction
     system_parts = [SYSTEM_PROMPT, "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE]
+
+    # Look up relevant knowledge based on the user's message + channel context
+    search_text = user_message
+    if channel_context:
+        # Include recent channel messages in the search to catch topic references
+        recent_channel_text = " ".join(msg["content"] for msg in channel_context[-5:])
+        search_text = recent_channel_text + " " + user_message
+
+    relevant_knowledge = get_relevant_knowledge(search_text)
+    if relevant_knowledge:
+        system_parts.append(f"\nRELEVANT INTEL (use this information to inform your response):\n{relevant_knowledge}")
 
     if memory_summary:
         system_parts.append(f"\nMEMORY OF PAST INTERACTIONS WITH {user_name.upper()} (background context only — prioritize the current channel conversation over this):\n{memory_summary}")
