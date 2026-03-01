@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import asyncio
 
 from inventory.sheets import (
-    POINTS_PER_UNIT, calculate_cart_points, get_cached_quantity,
+    calculate_cart_points, get_cached_quantity,
     refresh_cache,
 )
 
