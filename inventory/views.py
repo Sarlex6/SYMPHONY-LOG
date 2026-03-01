@@ -4,7 +4,7 @@ from datetime import datetime
 import gspread
 
 from inventory.sheets import (
-    SHEET_NAMES, POINTS_PER_UNIT, calculate_cart_points,
+    SHEET_NAMES, get_points_for_type, calculate_cart_points,
     get_categories, get_items_in_category, get_cached_quantity,
     get_supply_status, refresh_cache, spreadsheet, build_approval_embed,
 )
@@ -38,7 +38,7 @@ class PageSelectView(View):
         if cart:
             points = calculate_cart_points(cart)
             cart_btn = Button(
-                label=f"📋 View Log ({len(cart)} entries • {points} pts)",
+                label=f"📋 View Log ({len(cart)} entries • {points:.1f} pts)",
                 style=discord.ButtonStyle.secondary,
                 custom_id="view_cart_from_page"
             )
@@ -270,6 +270,7 @@ class AmountModal(Modal):
             "sheet": self.sheet_name,
             "category": self.category,
             "name": self.item["name"],
+            "type": self.item.get("type", ""),
             "row": self.item["row"],
             "operation": self.operation,
             "amount": amount,
@@ -327,8 +328,8 @@ class CartView(View):
             new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
                 else entry["current_qty"] - entry["amount"]
 
-            entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
-            points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
+            entry_points = entry["amount"] * get_points_for_type(entry.get("type", "")) if entry["operation"] == "add" else 0
+            points_str = f" • **{entry_points:.1f} pts**" if entry_points > 0 else ""
 
             lines.append(
                 f"**{i}.** {entry['name']} ({entry['sheet']})\n"
@@ -336,7 +337,7 @@ class CartView(View):
             )
 
         total_points = calculate_cart_points(cart)
-        lines.append(f"\n*{len(cart)} pending adjustment entries* • **Total: {total_points} points**")
+        lines.append(f"\n*{len(cart)} pending adjustment entries* • **Total: {total_points:.1f} points**")
         return "\n".join(lines)
 
     async def add_more(self, interaction: discord.Interaction):

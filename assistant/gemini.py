@@ -6,8 +6,8 @@ from assistant.persona import SYSTEM_PROMPT, STATIC_KNOWLEDGE
 from assistant.knowledge import get_relevant_knowledge
 
 GEMINI_API_KEY = config.get("GEMINI_API_KEY", "")
-PRIMARY_MODEL = "gemini-2.5-flash-lite"
-FALLBACK_MODEL = "gemini-2.0-flash-lite"
+PRIMARY_MODEL = "gemini-3-flash-preview"
+FALLBACK_MODEL = "gemini-2.5-flash"
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
@@ -112,6 +112,9 @@ async def generate_response(user_name, user_message, conversation_history=None, 
             "temperature": 0.8,
             "maxOutputTokens": 1024,
             "topP": 0.95,
+            "thinkingConfig": {
+                "thinkingLevel": "MINIMAL",
+            },
         },
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},

@@ -19,14 +19,42 @@ spreadsheet = gc.open_by_key(config["SPREADSHEET_ID"])
 SHEET_NAMES = ["MATERIALS&SUPPLIES", "EQUIPMENT", "FIREARMS", "MELEES"]
 
 # ── Points system ────────────────────────────────────────────────────────────
-POINTS_PER_UNIT = 2
+POINTS_BY_TYPE = {
+    "MATERIALS-C": 0.1,
+    "MATERIALS-B": 0.5,
+    "MATERIALS-A": 2,
+    "SUPPLIES-C": 0.2,
+    "SUPPLIES-A": 4,
+    "FOOD-C": 0.1,
+    "MISC-BIO-C": 1,
+    "MISC-BIO-A": 2,
+    "MISC-KEY-A": 2,
+    "WPN-CQC-C": 1,
+    "WPN-CQC-B": 2,
+    "WPN-CQC-A": 3,
+    "WPN-CQC-EXOTIC": 5,
+    "WPN-FRM-C": 2,
+    "WPN-FRM-B": 3,
+    "WPN-FRM-A": 4,
+    "WPN-FRM-EXOTIC": 6,
+    "MED-C-B": 1,
+    "MED-C-ADVANCED": 2,
+    "MED-A-ADVANCED": 4,
+    "COM-DEV-B": 1,
+    "EQUIP-GEN-C": 1,
+    "EQUIP-EXP-C": 2,
+}
+
+def get_points_for_type(item_type):
+    """Get points per unit for an item type. Returns 0 if type not found."""
+    return POINTS_BY_TYPE.get(item_type.strip().upper(), 0)
 
 def calculate_cart_points(cart):
     """Calculate total points for a cart. Only additions count."""
     total = 0
     for entry in cart:
         if entry["operation"] == "add":
-            total += entry["amount"] * POINTS_PER_UNIT
+            total += entry["amount"] * get_points_for_type(entry.get("type", ""))
     return total
 
 # ── Cache for spreadsheet data ───────────────────────────────────────────────
@@ -136,8 +164,8 @@ def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
         else:
             new_qty = current_qty - entry["amount"]
 
-        entry_points = entry["amount"] * POINTS_PER_UNIT if entry["operation"] == "add" else 0
-        points_str = f" • **{entry_points} pts**" if entry_points > 0 else ""
+        entry_points = entry["amount"] * get_points_for_type(entry.get("type", "")) if entry["operation"] == "add" else 0
+        points_str = f" • **{entry_points:.1f} pts**" if entry_points > 0 else ""
 
         description_lines.append(
             f"**{i}.** {entry['name']}\n"
@@ -151,7 +179,7 @@ def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
         embed.add_field(name="📝 Note", value=note, inline=False)
 
     embed.set_footer(
-        text=f"Requested by {requester_name} • {len(cart)} item(s) • {total_points} points"
+        text=f"Requested by {requester_name} • {len(cart)} item(s) • {total_points:.1f} points"
     )
 
     return embed
