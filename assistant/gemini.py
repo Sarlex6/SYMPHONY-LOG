@@ -7,7 +7,7 @@ from assistant.knowledge import get_relevant_knowledge
 
 GEMINI_API_KEY = config.get("GEMINI_API_KEY", "")
 PRIMARY_MODEL = "gemini-3-flash-preview"
-FALLBACK_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.5-flash-lite"
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
@@ -75,7 +75,7 @@ async def _call_model(session, model, payload):
                 elif resp.status == 403:
                     error_text = await resp.text()
                     print(f"[Gemini] Forbidden (403) on {model}: {error_text[:300]}")
-                    return True, "API access denied. Someone needs to check my credentials."
+                    return False, None
 
                 else:
                     error_text = await resp.text()
