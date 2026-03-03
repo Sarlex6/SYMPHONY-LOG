@@ -102,8 +102,8 @@ async def generate_response(user_name, user_message, conversation_history=None, 
         "parts": [{"text": "".join(current_message_parts)}]
     })
 
-    # Build request payload
-    payload = {
+    # Build base request payload
+    base_payload = {
         "system_instruction": {
             "parts": [{"text": system_instruction}]
         },
@@ -112,9 +112,6 @@ async def generate_response(user_name, user_message, conversation_history=None, 
             "temperature": 0.8,
             "maxOutputTokens": 1024,
             "topP": 0.95,
-            "thinkingConfig": {
-                "thinkingLevel": "MINIMAL",
-            },
         },
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -129,7 +126,12 @@ async def generate_response(user_name, user_message, conversation_history=None, 
             # Try primary model first, fall back if 503s persist
             for model in [PRIMARY_MODEL, FALLBACK_MODEL]:
                 api_url = f"{API_BASE}/{model}:generateContent"
-                success = False
+
+                # Add thinkingConfig only for Gemini 3 models
+                import copy
+                payload = copy.deepcopy(base_payload)
+                if "gemini-3" in model:
+                    payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "MINIMAL"}
 
                 for attempt in range(3):
                     async with session.post(
