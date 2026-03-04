@@ -120,7 +120,7 @@ async def generate_response(
 
     if memory_summary:
         system_parts.append(
-            f"\nMEMORY OF PAST INTERACTIONS WITH {user_name.upper()} "
+            f"\nPROFILE AND MEMORY OF {user_name.upper()} "
             f"(background context only):\n{memory_summary}"
         )
 

@@ -5,6 +5,8 @@ from assistant.gemini import generate_response
 from assistant.memory import (
     add_message, get_history, get_memory_summary, cleanup_memories,
     load_from_disk, save_to_disk, SAVE_INTERVAL_MINUTES,
+    should_update_profile, get_profile_context, generate_profile,
+    user_profiles,
 )
 from assistant.knowledge import load_knowledge
 
@@ -134,8 +136,15 @@ async def on_ready():
     print("[Assistant] Bot is ready!")
 
 
+OWNER_ID = 624559006072963082
+
 @bot.event
 async def on_message(message):
+    # Handle !profile command (owner only, must mention the bot)
+    if message.author.id == OWNER_ID and "!profile" in message.content and bot.user in message.mentions:
+        await _handle_profile_command(message)
+        return
+
     if not _should_respond(message):
         return
 
@@ -189,6 +198,75 @@ async def on_message(message):
                 await message.reply(chunk, mention_author=False)
             else:
                 await message.channel.send(chunk)
+
+    # Check if we should update this user's profile (runs in background, no delay)
+    if should_update_profile(user_id):
+        profile_messages = get_profile_context(user_id, user_name)
+        bot.loop.create_task(_run_profile_update(user_id, user_name, profile_messages))
+
+
+async def _run_profile_update(user_id, user_name, messages):
+    """Background task to generate/update a user profile."""
+    try:
+        await generate_profile(user_id, user_name, messages)
+    except Exception as e:
+        print(f"[Assistant] Profile update failed for {user_name}: {e}")
+
+
+async def _handle_profile_command(message):
+    """Handle !profile @user command. Owner only."""
+    # Find the target user (any mentioned user that isn't the bot)
+    target = None
+    for user in message.mentions:
+        if user != bot.user:
+            target = user
+            break
+
+    if not target:
+        await message.reply("Usage: `@Angela !profile @user`", mention_author=False)
+        return
+
+    profile = user_profiles.get(target.id)
+
+    if profile:
+        embed = discord.Embed(
+            title=f"Profile: {target.display_name}",
+            description=profile["profile"],
+            color=discord.Color.blue(),
+        )
+        embed.set_footer(text=f"Last updated: {profile['last_updated'][:19]} UTC")
+        embed.set_thumbnail(url=target.display_avatar.url)
+        await message.reply(embed=embed, mention_author=False)
+    else:
+        # No profile exists — offer to generate one
+        from assistant.memory import conversation_history
+        msg_count = len(conversation_history.get(target.id, []))
+        if msg_count > 0:
+            await message.reply(
+                f"No profile for **{target.display_name}** yet ({msg_count} messages in history). Generating now...",
+                mention_author=False,
+            )
+            profile_messages = get_profile_context(target.id, target.display_name)
+            await generate_profile(target.id, target.display_name, profile_messages)
+
+            # Check if it was created
+            new_profile = user_profiles.get(target.id)
+            if new_profile:
+                embed = discord.Embed(
+                    title=f"Profile: {target.display_name}",
+                    description=new_profile["profile"],
+                    color=discord.Color.green(),
+                )
+                embed.set_footer(text="Freshly generated")
+                embed.set_thumbnail(url=target.display_avatar.url)
+                await message.reply(embed=embed, mention_author=False)
+            else:
+                await message.reply("Profile generation failed. Try again later.", mention_author=False)
+        else:
+            await message.reply(
+                f"No data on **{target.display_name}** — they haven't talked to me yet.",
+                mention_author=False,
+            )
 
 
 def _split_response(text, max_len=2000):
