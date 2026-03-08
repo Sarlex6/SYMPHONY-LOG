@@ -14,12 +14,15 @@ def set_bot(bot):
 
 
 async def _check_auth(request):
-    """Verify the authorization token."""
+    """Verify the authorization token via query param or header."""
     if not CONSOLE_SECRET:
         return web.json_response({"error": "CONSOLE_SECRET not configured"}, status=503)
 
-    auth = request.headers.get("Authorization", "")
-    token = auth.replace("Bearer ", "").strip()
+    # Try query param first (?key=secret), then header
+    token = request.query.get("key", "")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "").strip()
 
     if token != CONSOLE_SECRET:
         return web.json_response({"error": "Unauthorized"}, status=401)
@@ -28,7 +31,7 @@ async def _check_auth(request):
 
 
 async def handle_say(request):
-    """Send a message to a channel as Angela."""
+    """Send a message to a channel as Angela. Supports GET with query params or POST with JSON."""
     auth_err = await _check_auth(request)
     if auth_err:
         return auth_err
@@ -36,17 +39,22 @@ async def handle_say(request):
     if not _bot or not _bot.is_ready():
         return web.json_response({"error": "Bot not ready"}, status=503)
 
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
-
-    channel_id = data.get("channel_id")
-    message = data.get("message", "").strip()
-    reply_to = data.get("reply_to")  # optional message ID to reply to
+    # Accept both GET query params and POST JSON
+    if request.method == "POST":
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+        channel_id = data.get("channel_id")
+        message = data.get("message", "").strip()
+        reply_to = data.get("reply_to")
+    else:
+        channel_id = request.query.get("c")
+        message = request.query.get("m", "").strip()
+        reply_to = request.query.get("r")
 
     if not channel_id or not message:
-        return web.json_response({"error": "channel_id and message required"}, status=400)
+        return web.json_response({"error": "channel_id (c) and message (m) required"}, status=400)
 
     try:
         channel = _bot.get_channel(int(channel_id))
@@ -106,6 +114,7 @@ def create_app():
     app = web.Application()
     app.router.add_get("/health", handle_health)
     app.router.add_get("/channels", handle_channels)
+    app.router.add_get("/say", handle_say)
     app.router.add_post("/say", handle_say)
     return app
 
