@@ -252,11 +252,11 @@ class OperationSelectView(View):
         self.add_item(back_btn)
 
     async def add_clicked(self, interaction: discord.Interaction):
-        modal = AmountModal(self.user, self.sheet_name, self.category, self.item, "add")
+        modal = AmountModal(self.user, self.sheet_name, self.category, self.item, "add", interaction)
         await interaction.response.send_modal(modal)
 
     async def subtract_clicked(self, interaction: discord.Interaction):
-        modal = AmountModal(self.user, self.sheet_name, self.category, self.item, "subtract")
+        modal = AmountModal(self.user, self.sheet_name, self.category, self.item, "subtract", interaction)
         await interaction.response.send_modal(modal)
 
     async def go_back(self, interaction: discord.Interaction):
@@ -272,8 +272,9 @@ class OperationSelectView(View):
 
 
 class AmountModal(Modal):
-    def __init__(self, user, sheet_name, category, item, operation):
-        super().__init__(title=f"{'Add to' if operation == 'add' else 'Subtract from'} {item['name'][:30]}")
+    def __init__(self, user, sheet_name, category, item, operation, original_interaction):
+        super().__init__(...)
+        self.original_interaction = original_interaction
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
@@ -322,7 +323,8 @@ class AmountModal(Modal):
         })
 
         view = CartView(self.user)
-        await interaction.response.edit_message(
+        await interaction.response.defer()
+        await self.original_interaction.edit_original_response(
             content=view.get_cart_display(),
             view=view
         )
@@ -335,7 +337,7 @@ class AmountModal(Modal):
 CART_DISPLAY_PAGE_SIZE = 15
 
 class CartView(View):
-    def __init__(self, user):
+    def __init__(self, user, page=0):
         super().__init__(timeout=900)
         self.user = user
         self.page = page
