@@ -2,6 +2,7 @@ import discord
 from discord.ui import View, Select, Button, Modal, TextInput
 from datetime import datetime
 import gspread
+import math
 
 from inventory.sheets import (
     SHEET_NAMES, get_points_for_type, calculate_cart_points,
@@ -130,30 +131,49 @@ class CategorySelectView(View):
 #  Item selection dropdown
 # ════════════════════════════════════════════════════════════════════════════
 
+ITEMS_PER_PAGE = 20  # leave room for nav options in the select
+
 class ItemSelectView(View):
-    def __init__(self, user, sheet_name, category, items):
+    def __init__(self, user, sheet_name, category, items, page=0):
         super().__init__(timeout=900)
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
         self.items = items
+        self.page = page
+
+        total_pages = math.ceil(len(items) / ITEMS_PER_PAGE)
+        start = page * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        page_items = items[start:end]
 
         select = Select(
-            placeholder="Select an item...",
+            placeholder=f"Select an item... (page {page + 1}/{total_pages})" if total_pages > 1 else "Select an item...",
             options=[
                 discord.SelectOption(
                     label=item["name"][:100],
                     description=f"Type: {item['type']} | Qty: {item['quantity']}" if item["type"] else f"Qty: {item['quantity']}",
                     value=str(item["row"])
                 )
-                for item in items[:25]
+                for item in page_items
             ],
             custom_id="item_select"
         )
         select.callback = self.item_selected
         self.add_item(select)
 
-        back_btn = Button(label="⬅ Back", style=discord.ButtonStyle.secondary, custom_id="back_to_category")
+        # Prev / Next buttons (only shown when needed)
+        if page > 0:
+            prev_btn = Button(label="⬅ Prev", style=discord.ButtonStyle.secondary, custom_id="prev_page")
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
+
+        if end < len(items):
+            next_btn = Button(label="Next ➡", style=discord.ButtonStyle.secondary, custom_id="next_page")
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
+
+        back_btn = Button(label="⬅ Back to Categories", style=discord.ButtonStyle.secondary, custom_id="back_to_category")
         back_btn.callback = self.go_back
         self.add_item(back_btn)
 
@@ -171,12 +191,35 @@ class ItemSelectView(View):
             view=view
         )
 
+    async def prev_page(self, interaction: discord.Interaction):
+        view = ItemSelectView(self.user, self.sheet_name, self.category, self.items, self.page - 1)
+        await interaction.response.edit_message(
+            content=self._header(),
+            view=view
+        )
+
+    async def next_page(self, interaction: discord.Interaction):
+        view = ItemSelectView(self.user, self.sheet_name, self.category, self.items, self.page + 1)
+        await interaction.response.edit_message(
+            content=self._header(),
+            view=view
+        )
+
     async def go_back(self, interaction: discord.Interaction):
         categories = get_categories(self.sheet_name)
         view = CategorySelectView(self.user, self.sheet_name, categories)
         await interaction.response.edit_message(
             content=f"**{self.sheet_name}** — Select a category:",
             view=view
+        )
+
+    def _header(self):
+        total_pages = math.ceil(len(self.items) / ITEMS_PER_PAGE)
+        start = self.page * ITEMS_PER_PAGE + 1
+        end = min((self.page + 1) * ITEMS_PER_PAGE, len(self.items))
+        return (
+            f"**{self.sheet_name}** > **{self.category}** — "
+            f"Items {start}–{end} of {len(self.items)} (page {self.page + 1}/{total_pages}):"
         )
 
     async def interaction_check(self, interaction: discord.Interaction):
