@@ -273,7 +273,7 @@ class OperationSelectView(View):
 
 class AmountModal(Modal):
     def __init__(self, user, sheet_name, category, item, operation, original_interaction):
-        super().__init__(...)
+        super().__init__(title=f"{'Add to' if operation == 'add' else 'Subtract from'} {item['name'][:30]}")
         self.original_interaction = original_interaction
         self.user = user
         self.sheet_name = sheet_name
