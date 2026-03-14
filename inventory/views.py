@@ -20,7 +20,7 @@ from inventory.state import (
 
 class PageSelectView(View):
     def __init__(self, user):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.user = user
 
         select = Select(
@@ -79,7 +79,7 @@ class PageSelectView(View):
 
 class CategorySelectView(View):
     def __init__(self, user, sheet_name, categories):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.user = user
         self.sheet_name = sheet_name
 
@@ -132,7 +132,7 @@ class CategorySelectView(View):
 
 class ItemSelectView(View):
     def __init__(self, user, sheet_name, category, items):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
@@ -189,7 +189,7 @@ class ItemSelectView(View):
 
 class OperationSelectView(View):
     def __init__(self, user, sheet_name, category, item):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
@@ -290,7 +290,7 @@ class AmountModal(Modal):
 
 class CartView(View):
     def __init__(self, user):
-        super().__init__(timeout=300)
+        super().__init__(timeout=900)
         self.user = user
 
         add_more_btn = Button(
@@ -322,6 +322,10 @@ class CartView(View):
         if not cart:
             return "No pending inventory adjustments."
 
+        total_points = calculate_cart_points(cart)
+        footer = f"\n*{len(cart)} entries* • **Total: {total_points:.1f} points**"
+
+        # Build compact lines
         lines = ["**Pending Adjustment Batch**:\n"]
         for i, entry in enumerate(cart, 1):
             op_symbol = "+" if entry["operation"] == "add" else "-"
@@ -329,16 +333,28 @@ class CartView(View):
                 else entry["current_qty"] - entry["amount"]
 
             entry_points = entry["amount"] * get_points_for_type(entry.get("type", "")) if entry["operation"] == "add" else 0
-            points_str = f" • **{entry_points:.1f} pts**" if entry_points > 0 else ""
+            points_str = f" • {entry_points:.1f}pt" if entry_points > 0 else ""
 
             lines.append(
-                f"**{i}.** {entry['name']} ({entry['sheet']})\n"
-                f"   {entry['current_qty']} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
+                f"**{i}.** {entry['name'][:25]} `{entry['current_qty']}→{new_qty}` ({op_symbol}{entry['amount']}){points_str}"
             )
 
-        total_points = calculate_cart_points(cart)
-        lines.append(f"\n*{len(cart)} pending adjustment entries* • **Total: {total_points:.1f} points**")
-        return "\n".join(lines)
+        result = "\n".join(lines) + footer
+
+        # If still over Discord's limit, show only last N entries + summary
+        if len(result) > 1900:
+            lines = [f"**Pending Adjustment Batch** ({len(cart)} entries):\n"]
+            lines.append(f"*...showing last 15 of {len(cart)} entries:*\n")
+            for i, entry in enumerate(cart[-15:], len(cart) - 14):
+                op_symbol = "+" if entry["operation"] == "add" else "-"
+                new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
+                    else entry["current_qty"] - entry["amount"]
+                lines.append(
+                    f"**{i}.** {entry['name'][:25]} `{entry['current_qty']}→{new_qty}` ({op_symbol}{entry['amount']})"
+                )
+            result = "\n".join(lines) + footer
+
+        return result
 
     async def add_more(self, interaction: discord.Interaction):
         view = PageSelectView(self.user)

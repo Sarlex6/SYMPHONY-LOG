@@ -4,7 +4,7 @@ from discord import app_commands
 from config import config
 from inventory.sheets import refresh_cache, item_cache, SHEET_NAMES
 from inventory.views import PageSelectView
-from inventory.state import cleanup_loop
+from inventory.state import cleanup_loop, clear_user_cart
 
 # ── Discord Bot setup ───────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -56,6 +56,19 @@ async def refresh_command(interaction: discord.Interaction):
         await interaction.followup.send(
             f"⚠️ Error refreshing cache: {str(e)}", ephemeral=True
         )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  /reset command
+# ════════════════════════════════════════════════════════════════════════════
+
+@tree.command(name="reset", description="Clear your current log cart and start fresh")
+async def reset_command(interaction: discord.Interaction):
+    clear_user_cart(interaction.user.id)
+    await interaction.response.send_message(
+        "Your log cart has been cleared. Use `/log` to start fresh.",
+        ephemeral=True
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
