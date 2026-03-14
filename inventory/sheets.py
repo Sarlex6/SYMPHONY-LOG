@@ -137,49 +137,75 @@ def get_supply_status(quantity):
         return "✅ HIGH"
 
 
-def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
-    """Build an approval embed using current cached quantities."""
-    import discord
+def build_approval_embeds(cart, requester_name, requester_avatar_url, note=""):
+    """Build one or more approval embeds, paginated if the cart is large."""
     from datetime import datetime
+    import discord
 
     total_points = calculate_cart_points(cart)
+    total_pages = 1
+    pages = []
 
-    embed = discord.Embed(
-        title="Log Request",
-        color=discord.Color.orange(),
-        timestamp=datetime.utcnow()
-    )
-    embed.set_author(
-        name=requester_name,
-        icon_url=requester_avatar_url
-    )
-
-    description_lines = []
+    # Build all entry lines first, then chunk them
+    entry_lines = []
     for i, entry in enumerate(cart, 1):
         current_qty = get_cached_quantity(entry["sheet"], entry["row"])
-
         op_symbol = "+" if entry["operation"] == "add" else "-"
-        if entry["operation"] == "add":
-            new_qty = current_qty + entry["amount"]
-        else:
-            new_qty = current_qty - entry["amount"]
-
+        new_qty = current_qty + entry["amount"] if entry["operation"] == "add" else current_qty - entry["amount"]
         entry_points = entry["amount"] * get_points_for_type(entry.get("type", "")) if entry["operation"] == "add" else 0
         points_str = f" • **{entry_points:.1f} pts**" if entry_points > 0 else ""
 
-        description_lines.append(
+        entry_lines.append((
             f"**{i}.** {entry['name']}\n"
             f"   📁 {entry['sheet']} > {entry['category']}\n"
             f"   📊 {current_qty} → **{new_qty}** ({op_symbol}{entry['amount']}){points_str}"
+        ))
+
+    # Chunk lines into pages staying under 3800 chars (safe margin under 4096)
+    DESCRIPTION_LIMIT = 3800
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for line in entry_lines:
+        line_len = len(line) + 2  # +2 for the \n\n separator
+        if current_chunk and current_len + line_len > DESCRIPTION_LIMIT:
+            chunks.append(current_chunk)
+            current_chunk = [line]
+            current_len = line_len
+        else:
+            current_chunk.append(line)
+            current_len += line_len
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    total_pages = len(chunks)
+
+    for page_idx, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Log Request" + (f" (page {page_idx + 1}/{total_pages})" if total_pages > 1 else ""),
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
         )
+        embed.set_author(name=requester_name, icon_url=requester_avatar_url)
+        embed.description = "\n\n".join(chunk)
 
-    embed.description = "\n\n".join(description_lines)
+        # Only add note + footer to last page so they don't repeat
+        if page_idx == total_pages - 1:
+            if note:
+                embed.add_field(name="📝 Note", value=note, inline=False)
+            embed.set_footer(
+                text=f"Requested by {requester_name} • {len(cart)} item(s) • {total_points:.1f} points"
+            )
+        else:
+            embed.set_footer(text=f"Continued on next embed...")
 
-    if note:
-        embed.add_field(name="📝 Note", value=note, inline=False)
+        pages.append(embed)
 
-    embed.set_footer(
-        text=f"Requested by {requester_name} • {len(cart)} item(s) • {total_points:.1f} points"
-    )
+    return pages
 
-    return embed
+
+# Keep old single-embed function as a shim if anything still calls it
+def build_approval_embed(cart, requester_name, requester_avatar_url, note=""):
+    return build_approval_embeds(cart, requester_name, requester_avatar_url, note)[0]

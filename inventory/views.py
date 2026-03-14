@@ -1,5 +1,6 @@
 import discord
 from discord.ui import View, Select, Button, Modal, TextInput
+from inventory.sheets import build_approval_embeds
 from datetime import datetime
 import gspread
 import math
@@ -331,10 +332,13 @@ class AmountModal(Modal):
 #  Cart view — add more items or submit
 # ════════════════════════════════════════════════════════════════════════════
 
+CART_DISPLAY_PAGE_SIZE = 15
+
 class CartView(View):
     def __init__(self, user):
         super().__init__(timeout=900)
         self.user = user
+        self.page = page
 
         add_more_btn = Button(
             label="➕ Add Another Entry",
@@ -360,44 +364,52 @@ class CartView(View):
         clear_btn.callback = self.clear_cart
         self.add_item(clear_btn)
 
+        cart = get_user_cart(user.id)
+        total_pages = math.ceil(len(cart) / CART_DISPLAY_PAGE_SIZE) if cart else 1
+
+        if page > 0:
+            prev_btn = Button(label="⬅ Prev", style=discord.ButtonStyle.secondary, custom_id="cart_prev")
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
+
+        if (page + 1) * CART_DISPLAY_PAGE_SIZE < len(cart):
+            next_btn = Button(label="Next ➡", style=discord.ButtonStyle.secondary, custom_id="cart_next")
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
+
     def get_cart_display(self):
         cart = get_user_cart(self.user.id)
         if not cart:
             return "No pending inventory adjustments."
 
         total_points = calculate_cart_points(cart)
-        footer = f"\n*{len(cart)} entries* • **Total: {total_points:.1f} points**"
+        total_pages = math.ceil(len(cart) / CART_DISPLAY_PAGE_SIZE)
+        start = self.page * CART_DISPLAY_PAGE_SIZE
+        page_items = cart[start:start + CART_DISPLAY_PAGE_SIZE]
 
-        # Build compact lines
-        lines = ["**Pending Adjustment Batch**:\n"]
-        for i, entry in enumerate(cart, 1):
+        header = f"**Pending Adjustment Batch** (page {self.page + 1}/{total_pages}):\n\n" if total_pages > 1 else "**Pending Adjustment Batch**:\n\n"
+        footer = f"\n\n*{len(cart)} entries total* • **{total_points:.1f} points**"
+
+        lines = []
+        for i, entry in enumerate(page_items, start + 1):
             op_symbol = "+" if entry["operation"] == "add" else "-"
             new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
                 else entry["current_qty"] - entry["amount"]
-
             entry_points = entry["amount"] * get_points_for_type(entry.get("type", "")) if entry["operation"] == "add" else 0
             points_str = f" • {entry_points:.1f}pt" if entry_points > 0 else ""
-
             lines.append(
                 f"**{i}.** {entry['name'][:25]} `{entry['current_qty']}→{new_qty}` ({op_symbol}{entry['amount']}){points_str}"
             )
 
-        result = "\n".join(lines) + footer
+        return header + "\n".join(lines) + footer
 
-        # If still over Discord's limit, show only last N entries + summary
-        if len(result) > 1900:
-            lines = [f"**Pending Adjustment Batch** ({len(cart)} entries):\n"]
-            lines.append(f"*...showing last 15 of {len(cart)} entries:*\n")
-            for i, entry in enumerate(cart[-15:], len(cart) - 14):
-                op_symbol = "+" if entry["operation"] == "add" else "-"
-                new_qty = entry["current_qty"] + entry["amount"] if entry["operation"] == "add" \
-                    else entry["current_qty"] - entry["amount"]
-                lines.append(
-                    f"**{i}.** {entry['name'][:25]} `{entry['current_qty']}→{new_qty}` ({op_symbol}{entry['amount']})"
-                )
-            result = "\n".join(lines) + footer
+    async def prev_page(self, interaction: discord.Interaction):
+        view = CartView(self.user, self.page - 1)
+        await interaction.response.edit_message(content=view.get_cart_display(), view=view)
 
-        return result
+    async def next_page(self, interaction: discord.Interaction):
+        view = CartView(self.user, self.page + 1)
+        await interaction.response.edit_message(content=view.get_cart_display(), view=view)
 
     async def add_more(self, interaction: discord.Interaction):
         view = PageSelectView(self.user)
@@ -483,7 +495,16 @@ class SubmitDetailsModal(Modal):
             request_id=request_id
         )
 
-        approval_msg = await approval_channel.send(embed=embed, view=approval_view)
+        embeds = build_approval_embeds(self.cart, requester_name, requester_avatar, note)
+
+        if len(embeds) == 1:
+            approval_msg = await approval_channel.send(embed=embeds[0], view=approval_view)
+        else:
+            # Send overflow embeds first (no view), then the final one with the buttons
+            for overflow_embed in embeds[:-1]:
+                await approval_channel.send(embed=overflow_embed)
+            approval_msg = await approval_channel.send(embed=embeds[-1], view=approval_view)
+
         approval_view.message_id = approval_msg.id
 
         pending_requests[request_id] = {

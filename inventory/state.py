@@ -60,8 +60,7 @@ def append_to_user_cart(user_id, entry):
 # ── Pending embed helpers ────────────────────────────────────────────────────
 
 async def update_pending_embeds(exclude_request_id=None):
-    """Update all pending approval embeds with current quantities from cache."""
-    from inventory.sheets import build_approval_embed
+    from inventory.sheets import build_approval_embeds
 
     to_remove = []
 
@@ -70,14 +69,15 @@ async def update_pending_embeds(exclude_request_id=None):
             continue
 
         try:
-            message = req_data["message"]
+            message = req_data["message"]  # this is always the LAST message (with buttons)
             cart = req_data["cart"]
             requester_name = req_data["requester_name"]
             requester_avatar = req_data["requester_avatar"]
             note = req_data.get("note", "")
 
-            new_embed = build_approval_embed(cart, requester_name, requester_avatar, note)
-            await message.edit(embed=new_embed)
+            embeds = build_approval_embeds(cart, requester_name, requester_avatar, note)
+
+            await message.edit(embed=embeds[-1])
 
         except (discord.NotFound, discord.HTTPException):
             to_remove.append(req_id)
