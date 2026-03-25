@@ -119,21 +119,34 @@ async def _get_channel_context(message):
     return context_messages
 
 
+_initialized = False
+
 @bot.event
 async def on_ready():
+    global _initialized
     print(f"[Assistant] Logged in as {bot.user} (ID: {bot.user.id})")
 
-    # Load saved memory from disk
-    load_from_disk()
-
-    # Load knowledge files
-    load_knowledge()
-
-    # Start background loops
-    bot.loop.create_task(_memory_cleanup_loop())
-    bot.loop.create_task(_memory_save_loop())
+    if not _initialized:
+        # Only run these once, not on every reconnect
+        load_from_disk()
+        load_knowledge()
+        bot.loop.create_task(_memory_cleanup_loop())
+        bot.loop.create_task(_memory_save_loop())
+        _initialized = True
+    else:
+        print("[Assistant] Reconnected (skipping re-initialization).")
 
     print("[Assistant] Bot is ready!")
+
+
+@bot.event
+async def on_disconnect():
+    print("[Assistant] Disconnected from Discord gateway.")
+
+
+@bot.event
+async def on_resumed():
+    print("[Assistant] Resumed Discord gateway session.")
 
 
 OWNER_ID = 624559006072963082

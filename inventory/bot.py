@@ -75,13 +75,31 @@ async def reset_command(interaction: discord.Interaction):
 #  Bot startup
 # ════════════════════════════════════════════════════════════════════════════
 
+_initialized = False
+
 @bot.event
 async def on_ready():
+    global _initialized
     print(f"[Inventory] Logged in as {bot.user} (ID: {bot.user.id})")
-    await tree.sync()
-    print("[Inventory] Slash commands synced!")
-    refresh_cache()
 
-    bot.loop.create_task(cleanup_loop(bot))
+    if not _initialized:
+        await tree.sync()
+        print("[Inventory] Slash commands synced!")
+        refresh_cache()
+        bot.loop.create_task(cleanup_loop(bot))
+        _initialized = True
+    else:
+        print("[Inventory] Reconnected (skipping re-initialization).")
+        refresh_cache()  # Still refresh cache on reconnect since data may have changed
 
     print("[Inventory] Bot is ready!")
+
+
+@bot.event
+async def on_disconnect():
+    print("[Inventory] Disconnected from Discord gateway.")
+
+
+@bot.event
+async def on_resumed():
+    print("[Inventory] Resumed Discord gateway session.")
