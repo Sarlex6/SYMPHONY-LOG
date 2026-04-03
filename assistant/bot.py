@@ -9,6 +9,7 @@ from assistant.memory import (
     user_profiles,
 )
 from assistant.knowledge import load_knowledge
+from assistant.moderation import check_message, MONITORED_USER_IDS, _next_response
 
 # ── Discord Bot setup ───────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -157,6 +158,24 @@ async def on_message(message):
     if message.author.id == OWNER_ID and "!profile" in message.content and bot.user in message.mentions:
         await _handle_profile_command(message)
         return
+
+    # ── Content moderation for monitored users ──────────────────────────────
+    if message.author.id in MONITORED_USER_IDS and message.content:
+        flagged = await check_message(message.content)
+        if flagged:
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"[Moderation] Could not delete message from {message.author}: {e}")
+                return  # Can't delete, don't respond either
+
+            mention = message.author.mention
+            warning = _next_response(mention)
+            try:
+                await message.channel.send(warning)
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"[Moderation] Could not send warning: {e}")
+            return
 
     if not _should_respond(message):
         return
