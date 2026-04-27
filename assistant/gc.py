@@ -83,7 +83,7 @@ async def should_respond(channel_context: list[dict]) -> bool:
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 16,
+            "maxOutputTokens": 32,
             "responseMimeType": "application/json",
         },
     }
