@@ -192,3 +192,60 @@ async def generate_response(
     except Exception as e:
         print(f"[Gemini] Unexpected error ({type(e).__name__}): {e}")
         return "An unexpected error occurred. I am logging this for analysis."
+
+
+_GC_ADDENDUM = (
+    "\n\nYou are currently in a group chat where no one has directly addressed you. "
+    "Join the conversation naturally — react, comment, ask something, or add something useful. "
+    "Keep it brief. Do not announce that you are joining or make it sound like a formal response."
+)
+
+
+async def generate_gc_response(channel_context: list[dict]) -> str | None:
+    """
+    Generate an unprompted group-chat message.
+    Returns None if all models fail (caller should silently skip).
+    """
+    if not GEMINI_API_KEY:
+        return None
+
+    system_instruction = SYSTEM_PROMPT + "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE
+
+    if channel_context:
+        recent_text = " ".join(msg["content"] for msg in channel_context[-5:])
+        relevant_knowledge = get_relevant_knowledge(recent_text)
+        if relevant_knowledge:
+            system_instruction += f"\n\nRELEVANT INTEL:\n{relevant_knowledge}"
+
+    system_instruction += _GC_ADDENDUM
+
+    context_lines = [
+        "[GROUP CHAT — oldest to newest. Join this conversation naturally as Angela:]"
+    ]
+    for i, msg in enumerate(channel_context, 1):
+        speaker = "You (Angela)" if msg.get("is_angela") else msg["author"]
+        if msg.get("replying_to"):
+            ref = msg["replying_to"]
+            context_lines.append(
+                f"  #{i} {speaker} (replying to {ref['author']}: {ref['content'][:80]}): {msg['content']}"
+            )
+        else:
+            context_lines.append(f"  #{i} {speaker}: {msg['content']}")
+    context_lines.append("[Respond as Angela — brief, in-character, natural.]")
+
+    contents = [{"role": "user", "parts": [{"text": "\n".join(context_lines)}]}]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            for model in [PRIMARY_MODEL, FALLBACK_MODEL]:
+                payload = _build_payload(system_instruction, contents, model)
+                success, response = await _call_model(session, model, payload)
+                if success:
+                    return response
+                if model == PRIMARY_MODEL:
+                    print(f"[Gemini] GC: Primary failed, falling back to {FALLBACK_MODEL}")
+        return None
+
+    except Exception as e:
+        print(f"[Gemini] GC unexpected error ({type(e).__name__}): {e}")
+        return None
