@@ -12,6 +12,7 @@ API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # Add guild IDs (integers) for each server she should roam freely in.
 ALLOWED_GUILD_IDS: set[int] = {
     1498364524552523968,
+    1246219094521548810,
 }
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -21,14 +22,22 @@ GC_COOLDOWN_SECONDS = 15
 # Minimum new human messages since Angela's last response before even checking.
 GC_MIN_NEW_MESSAGES = 1
 
+# Seconds of silence before Angela deactivates in a channel.
+ACTIVATION_TIMEOUT_SECONDS = 60
+
+# Case-insensitive substrings that wake Angela up in an inactive channel.
+ACTIVATION_KEYWORDS: set[str] = {"angela"}
+
 # ── State (in-memory, resets on restart) ─────────────────────────────────────
-_last_response: dict[int, float] = {}   # channel_id → unix timestamp
-_new_messages:  dict[int, int]   = {}   # channel_id → count since last response
+_last_response:    dict[int, float] = {}   # channel_id → last response timestamp
+_new_messages:     dict[int, int]   = {}   # channel_id → count since last response
+_last_activity:    dict[int, float] = {}   # channel_id → last human message timestamp (for timeout)
 
 
 def record_message(channel_id: int) -> None:
     """Call for every new human message in a GC-eligible channel."""
     _new_messages[channel_id] = _new_messages.get(channel_id, 0) + 1
+    _last_activity[channel_id] = time.monotonic()
 
 
 def is_on_cooldown(channel_id: int) -> bool:
@@ -43,6 +52,33 @@ def record_response(channel_id: int) -> None:
     """Call after Angela sends an unprompted message."""
     _last_response[channel_id] = time.monotonic()
     _new_messages[channel_id] = 0
+
+
+# ── Activation state ──────────────────────────────────────────────────────────
+_active_channels: dict[int, float] = {}   # channel_id → activation timestamp
+
+
+def is_active(channel_id: int) -> bool:
+    """Return True if Angela is currently active in this channel."""
+    last = _last_activity.get(channel_id, 0)
+    if channel_id not in _active_channels:
+        return False
+    if time.monotonic() - last > ACTIVATION_TIMEOUT_SECONDS:
+        _active_channels.pop(channel_id, None)
+        print(f"[GC] Channel {channel_id} deactivated (timeout)")
+        return False
+    return True
+
+
+def activate(channel_id: int) -> None:
+    _active_channels[channel_id] = time.monotonic()
+    print(f"[GC] Channel {channel_id} activated")
+
+
+def is_activation_trigger(content: str) -> bool:
+    """Return True if the message text contains an activation keyword."""
+    lower = content.lower()
+    return any(kw in lower for kw in ACTIVATION_KEYWORDS)
 
 
 # ── Relevance gate ────────────────────────────────────────────────────────────

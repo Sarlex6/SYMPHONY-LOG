@@ -190,11 +190,17 @@ async def on_message(message):
 
     # ── Path 2: GC auto-respond (unprompted) ────────────────────────────────
     if in_allowed_guild:
-        cooldown = gc_mod.is_on_cooldown(message.channel.id)
-        count = gc_mod.get_new_message_count(message.channel.id)
-        print(f"[GC] #{message.channel} | msgs={count} cooldown={cooldown}")
-        if not cooldown and count >= gc_mod.GC_MIN_NEW_MESSAGES:
-            await _handle_gc_response(message)
+        channel_id = message.channel.id
+
+        if gc_mod.is_active(channel_id):
+            # Active — participate naturally within cooldown limits
+            if (not gc_mod.is_on_cooldown(channel_id)
+                    and gc_mod.get_new_message_count(channel_id) >= gc_mod.GC_MIN_NEW_MESSAGES):
+                await _handle_gc_response(message)
+        elif gc_mod.is_activation_trigger(message.content):
+            # Inactive but keyword detected — wake up and respond immediately
+            gc_mod.activate(channel_id)
+            await _handle_gc_response(message, force=True)
 
 
 async def _handle_direct_response(message):
@@ -244,8 +250,11 @@ async def _handle_direct_response(message):
 _gc_processing: set[int] = set()  # channels currently generating a GC response
 
 
-async def _handle_gc_response(message):
-    """Decide with Flash Lite, then generate an unprompted GC response if warranted."""
+async def _handle_gc_response(message, force=False):
+    """Decide with Flash Lite, then generate an unprompted GC response if warranted.
+
+    force=True skips the gate (used on activation trigger).
+    """
     channel_id = message.channel.id
 
     # Prevent concurrent GC responses in the same channel
@@ -256,9 +265,10 @@ async def _handle_gc_response(message):
     try:
         channel_context = await _get_channel_context(message, include_current=True)
 
-        should = await gc_mod.should_respond(channel_context)
-        if not should:
-            return
+        if not force:
+            should = await gc_mod.should_respond(channel_context)
+            if not should:
+                return
 
         # Lock the cooldown immediately so messages arriving during generation don't retrigger
         gc_mod.record_response(channel_id)
