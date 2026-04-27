@@ -12,7 +12,6 @@ API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # Add guild IDs (integers) for each server she should roam freely in.
 ALLOWED_GUILD_IDS: set[int] = {
     1498364524552523968,
-    1246219094521548810,
 }
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
