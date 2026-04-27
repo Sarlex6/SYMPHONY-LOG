@@ -189,12 +189,12 @@ async def on_message(message):
         return
 
     # ── Path 2: GC auto-respond (unprompted) ────────────────────────────────
-    if (
-        in_allowed_guild
-        and not gc_mod.is_on_cooldown(message.channel.id)
-        and gc_mod.get_new_message_count(message.channel.id) >= gc_mod.GC_MIN_NEW_MESSAGES
-    ):
-        await _handle_gc_response(message)
+    if in_allowed_guild:
+        cooldown = gc_mod.is_on_cooldown(message.channel.id)
+        count = gc_mod.get_new_message_count(message.channel.id)
+        print(f"[GC] #{message.channel} | msgs={count} cooldown={cooldown}")
+        if not cooldown and count >= gc_mod.GC_MIN_NEW_MESSAGES:
+            await _handle_gc_response(message)
 
 
 async def _handle_direct_response(message):

@@ -49,18 +49,16 @@ def record_response(channel_id: int) -> None:
 # ── Relevance gate ────────────────────────────────────────────────────────────
 
 _GATE_PROMPT = """\
-You are a participation gate for a Discord AI called Angela. Decide if she should send \
-a message RIGHT NOW based on the recent chat below.
+You are a participation gate for a Discord AI called Angela. Decide if she should join \
+the conversation RIGHT NOW based on the recent messages below.
 
-Say YES if ANY of these are true:
-- Someone directly asked Angela a question, mentioned her name, or called for her
-- There is active back-and-forth between multiple people and she has something relevant to add
-- Something interesting, surprising, or reaction-worthy just happened
+Default to YES. Only say NO in these specific cases:
+- The last message is a bot command (starts with !, /, etc.)
+- Someone is just posting a link or image with no comment
+- The conversation clearly ended and no one is saying anything meaningful
 
-Say NO if:
-- Only one person has been posting
-- The conversation has naturally ended or gone quiet
-- Angela would be interrupting without adding value
+In all other cases — someone asking a question, sharing something, chatting, venting, \
+joking, debating, even if it's just one person talking — say YES.
 
 Respond with JSON only — no extra text:
 {"respond": true}   or   {"respond": false}
@@ -111,9 +109,12 @@ async def should_respond(channel_context: list[dict]) -> bool:
                 parts = candidates[0].get("content", {}).get("parts", [])
                 text = "".join(p.get("text", "") for p in parts).strip()
                 result = json.loads(text)
-                return bool(result.get("respond", False))
+                decision = bool(result.get("respond", False))
+                print(f"[GC] Gate decision: {'YES' if decision else 'NO'}")
+                return decision
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print(f"[GC] Gate JSON parse error: {e} | raw: {text!r}")
         return False
     except Exception as e:
         print(f"[GC] Gate check failed: {type(e).__name__}: {e}")
