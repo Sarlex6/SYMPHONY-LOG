@@ -241,27 +241,42 @@ async def _handle_direct_response(message):
         bot.loop.create_task(_run_profile_update(user_id, user_name, profile_messages))
 
 
+_gc_processing: set[int] = set()  # channels currently generating a GC response
+
+
 async def _handle_gc_response(message):
     """Decide with Flash Lite, then generate an unprompted GC response if warranted."""
-    channel_context = await _get_channel_context(message, include_current=True)
+    channel_id = message.channel.id
 
-    should = await gc_mod.should_respond(channel_context)
-    if not should:
+    # Prevent concurrent GC responses in the same channel
+    if channel_id in _gc_processing:
         return
+    _gc_processing.add(channel_id)
 
-    async with message.channel.typing():
-        response = await generate_gc_response(channel_context)
+    try:
+        channel_context = await _get_channel_context(message, include_current=True)
 
-    if not response:
-        return
+        should = await gc_mod.should_respond(channel_context)
+        if not should:
+            return
 
-    gc_mod.record_response(message.channel.id)
+        # Lock the cooldown immediately so messages arriving during generation don't retrigger
+        gc_mod.record_response(channel_id)
 
-    if len(response) <= 2000:
-        await message.channel.send(response)
-    else:
-        for chunk in _split_response(response):
-            await message.channel.send(chunk)
+        async with message.channel.typing():
+            response = await generate_gc_response(channel_context)
+
+        if not response:
+            return
+
+        if len(response) <= 2000:
+            await message.channel.send(response)
+        else:
+            for chunk in _split_response(response):
+                await message.channel.send(chunk)
+
+    finally:
+        _gc_processing.discard(channel_id)
 
 
 async def _run_profile_update(user_id, user_name, messages):
