@@ -84,16 +84,21 @@ def is_activation_trigger(content: str) -> bool:
 # ── Relevance gate ────────────────────────────────────────────────────────────
 
 _GATE_PROMPT = """\
-You are a participation gate for a Discord AI called Angela. Decide if she should join \
-the conversation RIGHT NOW based on the recent messages below.
+You are a participation gate for a Discord AI called Angela. She is already active in \
+this group chat. Decide if she should send a message RIGHT NOW.
 
-Default to YES. Only say NO in these specific cases:
-- The last message is a bot command (starts with !, /, etc.)
+Say YES if:
+- Someone asks a question or shares an opinion worth reacting to
+- People are having a real back-and-forth discussion
+- Someone says something noteworthy, funny, or surprising
+- Angela was addressed or her name was mentioned
+
+Say NO if:
+- The last message is a short greeting or acknowledgment aimed at a specific person \
+  (e.g. "hi @bob", "lol", "ok", "same")
+- It is a bot command (starts with !, /, etc.)
 - Someone is just posting a link or image with no comment
-- The conversation clearly ended and no one is saying anything meaningful
-
-In all other cases — someone asking a question, sharing something, chatting, venting, \
-joking, debating, even if it's just one person talking — say YES.
+- The exchange is clearly between two specific people with nothing for Angela to add
 
 Respond with JSON only — no extra text:
 {"respond": true}   or   {"respond": false}

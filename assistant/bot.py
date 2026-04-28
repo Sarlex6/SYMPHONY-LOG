@@ -180,8 +180,13 @@ async def on_message(message):
 
     # ── Track messages for GC auto-respond ──────────────────────────────────
     in_allowed_guild = message.guild is not None and message.guild.id in ALLOWED_GUILD_IDS
+
+    # Check active state BEFORE recording the message so the timeout isn't reset prematurely
+    channel_id = message.channel.id
+    channel_is_active = gc_mod.is_active(channel_id) if in_allowed_guild else False
+
     if in_allowed_guild:
-        gc_mod.record_message(message.channel.id)
+        gc_mod.record_message(channel_id)
 
     # ── Path 1: Directly mentioned or replied to → targeted response ─────────
     if _should_respond(message):
@@ -190,9 +195,7 @@ async def on_message(message):
 
     # ── Path 2: GC auto-respond (unprompted) ────────────────────────────────
     if in_allowed_guild:
-        channel_id = message.channel.id
-
-        if gc_mod.is_active(channel_id):
+        if channel_is_active:
             # Active — participate naturally within cooldown limits
             if (not gc_mod.is_on_cooldown(channel_id)
                     and gc_mod.get_new_message_count(channel_id) >= gc_mod.GC_MIN_NEW_MESSAGES):
