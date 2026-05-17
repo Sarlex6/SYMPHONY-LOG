@@ -42,11 +42,11 @@ _MODERATION_PROMPT = """\
 Determine if this Discord message is inappropriate and should be removed.
 
 Flag it ONLY if it contains:
-- Sexual or sexually suggestive content (explicit or implied)
-- Content that is disturbing, gross, or clearly inappropriate to share in a group chat with potential minors
+- Sexual or sexually suggestive content (only explicit)
+- Content that is disturbing, gross, or clearly inappropriate to share in a group chat with potential 13+ minors
 
 Do NOT flag:
-- General rudeness, swearing, dark humor
+- General rudeness, swearing, dark humor, threats that you cannot be absolutely sure are serious without more context
 - Off-topic or random messages
 - Complaining, venting, or controversial opinions
 
