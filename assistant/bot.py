@@ -185,6 +185,12 @@ async def on_message(message):
     channel_id = message.channel.id
     channel_is_active = gc_mod.is_active(channel_id) if in_allowed_guild else False
 
+    # Deactivation command — works even before recording the message
+    if in_allowed_guild and channel_is_active and gc_mod.is_deactivation_trigger(message.content):
+        gc_mod.deactivate(channel_id)
+        await message.channel.send("Understood. Going quiet.")
+        return
+
     if in_allowed_guild:
         gc_mod.record_message(channel_id)
 

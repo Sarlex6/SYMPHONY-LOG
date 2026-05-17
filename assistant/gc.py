@@ -81,6 +81,19 @@ def is_activation_trigger(content: str) -> bool:
     return any(kw in lower for kw in ACTIVATION_KEYWORDS)
 
 
+DEACTIVATION_KEYWORDS: set[str] = {"shut up angela", "shutup angela", "be quiet angela", "stop angela"}
+
+
+def is_deactivation_trigger(content: str) -> bool:
+    lower = content.lower()
+    return any(kw in lower for kw in DEACTIVATION_KEYWORDS)
+
+
+def deactivate(channel_id: int) -> None:
+    _active_channels.pop(channel_id, None)
+    print(f"[GC] Channel {channel_id} deactivated (manual)")
+
+
 # ── Relevance gate ────────────────────────────────────────────────────────────
 
 _GATE_PROMPT = """\
