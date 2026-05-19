@@ -64,7 +64,7 @@ async def update_pending_embeds(exclude_request_id=None):
 
     to_remove = []
 
-    for req_id, req_data in pending_requests.items():
+    for req_id, req_data in list(pending_requests.items()):
         if req_id == exclude_request_id:
             continue
 
