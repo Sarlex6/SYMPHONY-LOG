@@ -1,12 +1,11 @@
 import aiohttp
 import asyncio
-import json
 from config import config
 from assistant.persona import SYSTEM_PROMPT, STATIC_KNOWLEDGE
 from assistant.knowledge import get_relevant_knowledge
 
 GEMINI_API_KEY = config.get("GEMINI_API_KEY", "")
-PRIMARY_MODEL = "gemini-3-flash-preview"
+PRIMARY_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODEL = "gemini-2.5-flash-lite"
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 

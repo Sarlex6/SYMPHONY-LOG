@@ -9,7 +9,6 @@ from assistant.memory import (
     user_profiles,
 )
 from assistant.knowledge import load_knowledge
-from assistant.moderation import check_message, MONITORED_USER_IDS, _next_response
 import assistant.gc as gc_mod
 from assistant.gc import ALLOWED_GUILD_IDS
 
@@ -161,22 +160,6 @@ async def on_message(message):
     # Block DMs — Angela does not respond to direct messages
     if isinstance(message.channel, discord.DMChannel):
         return
-
-    # ── Content moderation for monitored users ──────────────────────────────
-    if message.author.id in MONITORED_USER_IDS and message.content:
-        flagged = await check_message(message.content)
-        if flagged:
-            try:
-                await message.delete()
-            except (discord.Forbidden, discord.HTTPException) as e:
-                print(f"[Moderation] Could not delete message from {message.author}: {e}")
-                return
-
-            try:
-                await message.channel.send(_next_response(message.author.mention))
-            except (discord.Forbidden, discord.HTTPException) as e:
-                print(f"[Moderation] Could not send warning: {e}")
-            return
 
     # ── Track messages for GC auto-respond ──────────────────────────────────
     in_allowed_guild = message.guild is not None and message.guild.id in ALLOWED_GUILD_IDS
