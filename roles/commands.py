@@ -128,7 +128,10 @@ def register_commands(tree):
         await interaction.response.defer(ephemeral=True)
         result = await service.register(
             context_from(interaction),
-            discord_username=interaction.user.display_name,
+            # The account username (@handle), not display_name — that would give
+            # the per-server nickname, which differs between servers and changes
+            # whenever someone edits it.
+            discord_username=interaction.user.name,
         )
 
         auth_url = result.detail.get("auth_url")

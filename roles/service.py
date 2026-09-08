@@ -320,14 +320,16 @@ class RoleManagerService:
         except RoleManagerError as exc:
             return ActionResult.error(f"Could not create the record: {exc}")
 
-        placement = layout.describe_placement(
-            saved, self.repository.live_records(), cfg
-        )
         job = self.sync_queue.enqueue(saved, reason="registration")
 
+        # Deliberately says nothing about the sheet row or section: where a record
+        # physically sits is an implementation detail that moves on every layout
+        # pass, and it means nothing to the member reading this.
+        rank = cfg.rank(saved.rank_key)
         message = (
             f"Registered. Roblox account **{roblox_username or roblox_id}** "
-            f"linked, entry date **{saved.entry_date}**, placed at {placement}."
+            f"linked as **{rank.display if rank else 'unranked'}**, "
+            f"entry date **{saved.entry_date}**."
         )
         prompt = self._group_join_prompt(in_group, cfg)
         if prompt:

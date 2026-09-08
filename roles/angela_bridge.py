@@ -278,12 +278,16 @@ def _target_id(args, actor_discord_id, required=False):
     return int(match.group())
 
 
-async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None):
+async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
+                  actor_username=""):
     """Run a proposed action as the given Discord user.
 
     `actor_discord_id` must be the real message author's ID, read from Discord.
     It is the only identity the authorization layer consults, and the model
     cannot influence it.
+
+    `actor_username` is the author's account username, read from Discord in the
+    same way. It is display data for the roster only and carries no authority.
     """
     if proposed is None or not proposed.is_known:
         return ActionResult.invalid("No recognizable management action.")
@@ -310,7 +314,9 @@ async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None):
 
     try:
         if action == "register":
-            return await service.register(context, discord_username=str(actor_discord_id))
+            return await service.register(
+                context, discord_username=actor_username or str(actor_discord_id)
+            )
 
         if action == "set_timezone":
             value = args.get("timezone") or args.get("value")
@@ -444,6 +450,9 @@ async def handle_message(message, cleaned_text):
     result = await execute(
         proposed,
         actor_discord_id=message.author.id,  # the real author. Not model-supplied.
+        # Account username, not display_name: display_name is the per-server
+        # nickname, and the roster records the account.
+        actor_username=message.author.name,
         guild_id=message.guild.id if message.guild else None,
         channel_id=message.channel.id,
     )

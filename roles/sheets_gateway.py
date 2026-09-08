@@ -344,7 +344,9 @@ async def normalize_managed_merges(sections, footer_row):
 
       * Column C is unmerged and then re-merged once per category block, so the
         section label reads "HIGH-RANK" a single time down the whole block
-        instead of being repeated on every row.
+        instead of being repeated on every row. The label is centred both ways,
+        so it sits in the middle of the merged block rather than clinging to its
+        top-left corner.
 
     `sections` is [(first_row, last_row), ...] in sheet coordinates. Blocks of a
     single row are left unmerged - a one-cell merge is meaningless.
@@ -362,13 +364,31 @@ async def normalize_managed_merges(sections, footer_row):
     ]
 
     merged = 0
-    for first, last in sections:
-        if last > first:
-            requests.append({"mergeCells": {
-                "range": _column_range(worksheet.id, columns.COL_CATEGORY, first, last),
-                "mergeType": "MERGE_ALL",
-            }})
-            merged += 1
+    if sections:
+        # Centre the whole column, not just the merged blocks, so a single-row
+        # section - which is never merged - still matches the rest. Only the two
+        # alignment fields are in `fields`, so the design's colours, borders and
+        # font are left exactly as they are.
+        requests.append({"repeatCell": {
+            "range": _column_range(
+                worksheet.id, columns.COL_CATEGORY,
+                columns.FIRST_MANAGED_ROW, last_row),
+            "cell": {"userEnteredFormat": {
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+            }},
+            "fields": "userEnteredFormat.horizontalAlignment,"
+                      "userEnteredFormat.verticalAlignment",
+        }})
+
+        for first, last in sections:
+            if last > first:
+                requests.append({"mergeCells": {
+                    "range": _column_range(
+                        worksheet.id, columns.COL_CATEGORY, first, last),
+                    "mergeType": "MERGE_ALL",
+                }})
+                merged += 1
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, {"requests": requests})

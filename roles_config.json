@@ -291,7 +291,7 @@
     },
 
     "EXECUTIVE_TEAM": {
-      "display": "EXECUTIVE TEAM",
+      "display": "EXECUTIVE",
       "category": "HIGH-RANK",
       "order": 14,
       "special": false,
