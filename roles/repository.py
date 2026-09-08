@@ -208,6 +208,13 @@ def diff_records(previous_by_uid, current_records):
         if record.is_empty_row():
             continue
 
+        # Rows entered by hand before this system existed have no identity
+        # columns. Reporting them as new on every poll would queue work that can
+        # never run and flood the log; they are surfaced by the integrity report
+        # instead, and cleared by /roles restructure.
+        if record.is_incomplete():
+            continue
+
         uid = record.record_uid
         if not uid:
             changes.append(RecordChange(RecordChange.ADDED, record))
@@ -375,14 +382,31 @@ class PersonnelRepository:
         working = [r for r in self.live_records() if r.record_uid != record.record_uid]
         await self._apply_layout(working, cfg)
 
-    async def restructure(self):
+    async def restructure(self, purge_incomplete=False):
         """Re-sort and resize the whole managed area.
 
-        Caller must hold `gateway.write_lock`.
+        `purge_incomplete=True` also drops rows that were entered by hand and
+        carry no bot identity, clearing the sheet for first use. Destructive, so
+        it is never the default — the caller has to ask for it.
+
+        Returns (plan, purged_records). Caller must hold `gateway.write_lock`.
         """
         cfg = roles_config.current()
         await self.load()
-        return await self._apply_layout(self.live_records(), cfg)
+
+        records = self.live_records()
+        purged = []
+
+        if purge_incomplete:
+            purged = [r for r in records if r.is_incomplete()]
+            records = [r for r in records if not r.is_incomplete()]
+            for record in purged:
+                print(f"[Roles] Purging incomplete row {record.row}: "
+                      f"{record.discord_username or '(no name)'} "
+                      f"({record.rank_key or 'no rank'})")
+
+        plan = await self._apply_layout(records, cfg)
+        return plan, purged
 
     async def _apply_layout(self, records, cfg):
         """Resize, reorder and rewrite the managed area in one pass.
@@ -516,8 +540,11 @@ class PersonnelRepository:
         """Structural problems worth a human's attention. Never auto-resolved."""
         cfg = roles_config.current()
         records = self.live_records()
+        incomplete = [r for r in records if r.is_incomplete()]
         return {
             "records": len(records),
+            "incomplete": incomplete,
+            "sheet_ready": not incomplete,
             "footer_row": self._footer_row,
             "empty_rows": len(layout.find_empty_rows(self._records)),
             "misplaced": layout.find_misplaced(records, cfg),

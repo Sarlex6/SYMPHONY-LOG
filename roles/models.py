@@ -162,6 +162,22 @@ class UserRecord:
             return True
         return not (self.discord_id or self.roblox_id or self.discord_username.strip())
 
+    def is_incomplete(self):
+        """A row with human-facing content but no bot identity.
+
+        These are rows entered by hand before this system existed: they have a
+        name, a rank and so on in the visible columns, but no Discord ID and no
+        record UID in the technical columns. The system cannot look them up,
+        authorize them, or synchronize them to anything — the person has to
+        /register before the row becomes a real record.
+
+        Reported by /roles status and cleared by /roles restructure with
+        purge_incomplete enabled.
+        """
+        if self.is_empty_row():
+            return False
+        return not (self.record_uid and self.discord_id)
+
     def sync_fingerprint(self):
         """Hash of the fields that outbound synchronization depends on.
 

@@ -333,7 +333,7 @@
       "special": true,
       "special_group_order": 1,
       "main_discord_role_id": 1472730025391423662,
-      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301, 1360740870634209550],
       "syncs_roblox": false,
       "roblox_roles_by_branch": {
         "N/A": 108616203,
@@ -585,7 +585,7 @@
     "retry_backoff_seconds": [10, 30, 120, 600, 1800],
     "max_attempts": 5,
     "_enabled_comment": "Set false for a dry run: changes are computed and logged but not applied.",
-    "enabled": false,
+    "enabled": true,
     "auto_restructure": true,
 
     "_removal_README": [

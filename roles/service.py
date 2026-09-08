@@ -492,8 +492,13 @@ class RoleManagerService:
             f"Synchronization queued for {len(jobs)} record(s)."
         )
 
-    async def restructure(self, context):
-        """Re-sort and resize the managed area."""
+    async def restructure(self, context, purge_incomplete=False):
+        """Re-sort and resize the managed area.
+
+        `purge_incomplete=True` also clears rows that were entered by hand and
+        carry no bot identity - the one-off cleanup that prepares a pre-existing
+        sheet for first use. Destructive, so it is opt-in.
+        """
         actor = self.actor_record(context)
 
         decision = permissions.check(
@@ -505,11 +510,42 @@ class RoleManagerService:
         if not decision.allowed:
             return ActionResult.denied(decision.reason, permission=Permission.RESTRUCTURE_SHEET)
 
+        await self.repository.load()
+        incomplete = [r for r in self.repository.live_records() if r.is_incomplete()]
+
+        # Say what would be destroyed rather than destroying it unasked.
+        if incomplete and not purge_incomplete:
+            preview = ", ".join(
+                (r.discord_username or f"row {r.row}") for r in incomplete[:10]
+            )
+            more = f" (+{len(incomplete) - 10} more)" if len(incomplete) > 10 else ""
+            return ActionResult.invalid(
+                f"**{len(incomplete)} incomplete row(s)** have no Discord ID or "
+                f"record UID. They were entered by hand, so the system cannot "
+                f"look them up, authorize them or synchronize them.\n\n"
+                f"{preview}{more}\n\n"
+                f"Re-run with `purge_incomplete: True` to clear them and prepare "
+                f"the sheet. **This deletes those rows.** Take a backup first.",
+                incomplete=len(incomplete),
+            )
+
         try:
             async with self.gateway.write_lock:
-                plan = await self.repository.restructure()
+                plan, purged = await self.repository.restructure(
+                    purge_incomplete=purge_incomplete
+                )
         except RoleManagerError as exc:
             return ActionResult.error(f"Restructure failed: {exc}")
+
+        if purged:
+            names = ", ".join((r.discord_username or f"row {r.row}") for r in purged[:15])
+            more = f" (+{len(purged) - 15} more)" if len(purged) > 15 else ""
+            return ActionResult.success(
+                f"Purged **{len(purged)}** incomplete row(s) and restructured the "
+                f"sheet.\n{plan.summary()}.\n\nRemoved: {names}{more}\n\n"
+                f"The sheet is now ready for use.",
+                purged=len(purged),
+            )
 
         return ActionResult.success(f"Sheet restructured: {plan.summary()}.")
 
@@ -530,8 +566,18 @@ class RoleManagerService:
         report = self.repository.integrity_report()
         stats = self.sync_queue.stats()
 
-        lines = [
+        lines = []
+        if not report["sheet_ready"]:
+            lines.append(
+                f"⚠️ **Sheet not ready for use** — {len(report['incomplete'])} row(s) "
+                f"have no Discord ID or record UID. Run `/roles restructure "
+                f"purge_incomplete: True` to clear them."
+            )
+            lines.append("")
+
+        lines += [
             f"**Records:** {report['records']}  •  footer row {report['footer_row']}",
+            f"**Incomplete:** {len(report['incomplete'])}",
             f"**Empty rows:** {report['empty_rows']}",
             f"**Misplaced:** {len(report['misplaced'])}",
             f"**Duplicates:** {len(report['duplicates'])}",

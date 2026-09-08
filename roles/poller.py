@@ -174,7 +174,9 @@ class SheetPoller:
 
         try:
             async with self.service.gateway.write_lock:
-                await self.repository.restructure()
+                # Never purges: automatic deletion of rows is not something a
+                # background loop should decide. Only the explicit command does.
+                await self.repository.restructure(purge_incomplete=False)
         except Exception as exc:
             print(f"[Roles:Poll] Restructure failed: {type(exc).__name__}: {exc}")
 

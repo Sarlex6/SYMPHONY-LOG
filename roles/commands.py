@@ -113,7 +113,7 @@ def register_commands(tree):
         name="set", description="Modify a PERSONNEL record"
     )
     roles_group = app_commands.Group(
-        name="roles", description="Role management administration"
+        name="aria", description="Role management administration"
     )
 
     # ── /register ──
@@ -281,9 +281,18 @@ def register_commands(tree):
         name="restructure",
         description="Re-sort the PERSONNEL sheet and remove unused rows",
     )
-    async def restructure_command(interaction: discord.Interaction):
+    @app_commands.describe(
+        purge_incomplete="DESTRUCTIVE: also delete hand-entered rows that have no "
+                         "Discord ID. Use once to prepare a pre-existing sheet.",
+    )
+    async def restructure_command(
+        interaction: discord.Interaction,
+        purge_incomplete: bool = False,
+    ):
         await interaction.response.defer(ephemeral=True)
-        result = await service.restructure(context_from(interaction))
+        result = await service.restructure(
+            context_from(interaction), purge_incomplete=purge_incomplete
+        )
         await _respond(interaction, result)
 
     # ── /roles status ──
