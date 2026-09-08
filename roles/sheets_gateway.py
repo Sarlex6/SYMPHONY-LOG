@@ -484,11 +484,67 @@ async def ensure_status_formatting(footer_row):
           f"(replaced {len(stale)} previous rule(s)).")
 
 
-async def set_dropdown_values(col, values, footer_row):
-    """Rebuild the data validation dropdown for column F (RANK) or G (BRANCH).
+async def _read_validation_rule(worksheet, col, row):
+    """The data validation rule currently on one cell, or None.
 
-    Called after rank/branch configuration changes so the sheet's dropdowns match
-    the configuration exactly. Refuses any other column.
+    Reads a single cell with a tight field mask, so this costs almost nothing
+    even though it asks for grid data.
+    """
+    a1 = f"{worksheet.title}!{columns.col_letter(col)}{row}"
+    params = {
+        "includeGridData": "true",
+        "ranges": [a1],
+        "fields": "sheets.data.rowData.values.dataValidation",
+    }
+
+    try:
+        meta = await asyncio.to_thread(spreadsheet.fetch_sheet_metadata, params)
+    except Exception as exc:
+        # Not fatal: without the current rule we simply fall back to writing one.
+        print(f"[Roles] Could not read existing validation on "
+              f"{columns.col_letter(col)}{row}: {exc}")
+        return None
+
+    try:
+        sheets = meta.get("sheets") or []
+        data = (sheets[0].get("data") or [])[0]
+        row_data = (data.get("rowData") or [])[0]
+        cell = (row_data.get("values") or [])[0]
+        return cell.get("dataValidation")
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _rule_values(rule):
+    """The dropdown's value list, in order."""
+    if not rule:
+        return None
+    condition = rule.get("condition") or {}
+    if condition.get("type") != "ONE_OF_LIST":
+        return None
+    return [v.get("userEnteredValue") for v in (condition.get("values") or [])]
+
+
+async def set_dropdown_values(col, values, footer_row):
+    """Bring the column F (RANK) / G (BRANCH) dropdown in line with configuration.
+
+    Deliberately conservative about *how* it does that.
+
+    A wholesale setDataValidation replaces the entire rule, and a dropdown's
+    appearance - the chip styling applied in the Sheets UI - lives on that rule.
+    Rewriting it on every start is what silently reverted hand-styled dropdowns
+    to plain white after a redeploy.
+
+    So this:
+
+      * reads the rule that is already there;
+      * does nothing at all when the value list already matches, which is the
+        normal case on every restart;
+      * when the list genuinely changed, edits ONLY `condition.values` on the
+        existing rule and writes that back, leaving every other property of the
+        rule exactly as it was found.
+
+    Refuses any column other than F and G.
     """
     if col not in (columns.COL_RANK, columns.COL_BRANCH):
         raise SheetStructureError(
@@ -500,6 +556,34 @@ async def set_dropdown_values(col, values, footer_row):
 
     worksheet = await get_worksheet()
     last_row = columns.last_managed_row(footer_row)
+    if last_row < columns.FIRST_MANAGED_ROW:
+        return
+
+    values = list(values)
+    letter = columns.col_letter(col)
+
+    # Check both ends of the managed range. Inserted rows inherit validation from
+    # the row above, so if the first and last agree the column is consistent.
+    first_rule = await _read_validation_rule(worksheet, col, columns.FIRST_MANAGED_ROW)
+    last_rule = (
+        first_rule if last_row == columns.FIRST_MANAGED_ROW
+        else await _read_validation_rule(worksheet, col, last_row)
+    )
+
+    if _rule_values(first_rule) == values and _rule_values(last_rule) == values:
+        print(f"[Roles] Column {letter} dropdown already matches configuration "
+              f"({len(values)} value(s)); styling left untouched.")
+        return
+
+    # Start from whatever is on the sheet so styling and options survive.
+    rule = dict(first_rule) if first_rule else {"showCustomUi": True, "strict": False}
+    condition = dict(rule.get("condition") or {})
+    condition["type"] = "ONE_OF_LIST"
+    condition["values"] = [{"userEnteredValue": v} for v in values]
+    rule["condition"] = condition
+    # Never reject a manual edit: the sheet is the source of truth, so a value
+    # typed by hand must be allowed to stand even if it is off-list.
+    rule["strict"] = False
 
     body = {
         "requests": [{
@@ -511,14 +595,7 @@ async def set_dropdown_values(col, values, footer_row):
                     "startColumnIndex": col - 1,
                     "endColumnIndex": col,
                 },
-                "rule": {
-                    "condition": {
-                        "type": "ONE_OF_LIST",
-                        "values": [{"userEnteredValue": v} for v in values],
-                    },
-                    "showCustomUi": True,
-                    "strict": False,  # never reject a manual edit; the sheet is authoritative
-                },
+                "rule": rule,
             }
         }]
     }
@@ -527,7 +604,9 @@ async def set_dropdown_values(col, values, footer_row):
         await asyncio.to_thread(spreadsheet.batch_update, body)
     except gspread.exceptions.APIError as exc:
         raise TransientSyncError(
-            f"Failed to update column {columns.col_letter(col)} dropdown: {exc}"
+            f"Failed to update column {letter} dropdown: {exc}"
         ) from exc
 
-    print(f"[Roles] Column {columns.col_letter(col)} dropdown updated ({len(values)} value(s)).")
+    previous = _rule_values(first_rule)
+    print(f"[Roles] Column {letter} dropdown updated: "
+          f"{len(previous) if previous else 0} -> {len(values)} value(s).")

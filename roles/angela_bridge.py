@@ -196,9 +196,12 @@ def _build_parser_prompt():
         "- Output JSON only, no prose, no markdown fences.\n"
         "- Never decide whether the user is permitted to do this. You do not "
         "  evaluate authority; the backend does. Just identify the request.\n"
-        "- 'user' must be a numeric Discord ID taken from a <@123> mention in the "
-        "  message. If a user is named but not mentioned, do not guess an ID — ask "
-        "  for a mention via 'clarification'.\n"
+        "- 'user' identifies WHO the request is about:\n"
+        "    * The member is talking about themselves (\"my rank\", \"set me to...\", "
+        "      \"I want\", or no one else is named) -> set user to \"me\".\n"
+        "    * Someone else is <@123> mentioned -> use that numeric ID.\n"
+        "    * Someone else is named but NOT mentioned -> do not guess an ID, and "
+        "      do not fall back to \"me\"; ask for a mention via 'clarification'.\n"
         "- If the request is ambiguous, incomplete, or names a rank/branch that is "
         "  not in the configured lists, set 'clarification' to a short question and "
         "  leave 'action' empty.\n"
@@ -261,21 +264,47 @@ async def parse_intent(text, mentioned_ids=None):
 
 # ── Execution ────────────────────────────────────────────────────────────────
 
-def _target_id(args, actor_discord_id, required=False):
-    """Resolve the target user ID from proposed arguments.
+#: Returned when the request is explicitly about the requester themselves.
+#: Distinct from None, which means "no target could be worked out" — collapsing
+#: the two is what made "set my branch to medical" demand a mention of yourself.
+SELF = "SELF"
 
-    Accepts a raw ID or a <@123> mention. Returns None to mean "the requester",
-    which the service resolves itself.
+#: Words a member uses to mean themselves.
+_SELF_WORDS = {"me", "my", "mine", "myself", "self", "i", "own"}
+
+
+def _target_id(args, actor_discord_id, required=False):
+    """Resolve the target user from proposed arguments.
+
+    Three distinct outcomes, and the difference matters:
+
+        int   an explicit target, from a <@123> mention or a raw ID
+        SELF  the requester themselves, said in so many words
+        None  nobody identifiable - a name was typed with no mention, or the
+              model named no one at all
+
+    Only None should prompt "mention the user". SELF is a perfectly clear
+    request, and whether the member may act on themselves is the permission
+    layer's decision, not this function's.
     """
     raw = args.get("user") or args.get("target") or args.get("member")
-    if raw in (None, "", "me", "self"):
-        return None if not required else actor_discord_id
+
+    if raw is None or str(raw).strip() == "":
+        # The model named nobody. For a self-only action that means the
+        # requester; otherwise the caller decides whether to ask.
+        return SELF if required else None
 
     text = str(raw).strip()
+
     match = re.search(r"\d{15,25}", text)
-    if not match:
-        return None
-    return int(match.group())
+    if match:
+        return int(match.group())
+
+    if text.strip("@ ").casefold() in _SELF_WORDS:
+        return SELF
+
+    # A name with no mention. Deliberately not guessed at.
+    return None
 
 
 async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
@@ -305,11 +334,17 @@ async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
 
     # A self-only action can never be pointed at somebody else, whatever the
     # model emitted.
-    target_id = None if spec["self_only"] else _target_id(args, actor_discord_id)
+    resolved = SELF if spec["self_only"] else _target_id(args, actor_discord_id)
+
+    # SELF collapses to None for the service, which reads "no target given" as
+    # "the requester". Actions that need an explicit person check `resolved`
+    # instead, so they can tell "themselves" apart from "nobody".
+    target_id = None if resolved is SELF else resolved
 
     print(
         f"{context.log_prefix()} ANGELA action={action} actor={actor_discord_id} "
-        f"target={target_id or 'self'} args={ {k: v for k, v in args.items() if k != 'user'} }"
+        f"target={target_id if target_id else 'self' if resolved is SELF else 'unresolved'} "
+        f"args={ {k: v for k, v in args.items() if k != 'user'} }"
     )
 
     try:
@@ -328,17 +363,23 @@ async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
             value = args.get("rank") or args.get("value")
             if not value:
                 return ActionResult.invalid("No rank given.")
-            if target_id is None:
+            if resolved is None:
                 return ActionResult.invalid("Mention the user whose rank should change.")
-            return await service.set_rank(context, str(value), target_id)
+            # Self-directed requests go through; whether the member may rank
+            # themselves is the permission layer's call, not this one's.
+            return await service.set_rank(
+                context, str(value), target_id or actor_discord_id
+            )
 
         if action == "set_branch":
             value = args.get("branch") or args.get("value")
             if not value:
                 return ActionResult.invalid("No branch given.")
-            if target_id is None:
+            if resolved is None:
                 return ActionResult.invalid("Mention the user whose branch should change.")
-            return await service.set_branch(context, str(value), target_id)
+            return await service.set_branch(
+                context, str(value), target_id or actor_discord_id
+            )
 
         if action == "set_status":
             value = args.get("status") or args.get("value")

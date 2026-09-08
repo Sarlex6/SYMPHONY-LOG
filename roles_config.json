@@ -228,11 +228,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108616203,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -246,11 +246,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 381902001,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -264,11 +264,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 381968002,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -282,11 +282,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 382924000,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -300,11 +300,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108615705,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -318,11 +318,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108615704,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
@@ -334,14 +334,14 @@
       "special_group_order": 1,
       "main_discord_role_id": 1472730025391423662,
       "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301, 1360740870634209550],
-      "syncs_roblox": false,
+      "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108616203,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 698685092,
+        "INTELLIGENCE": 699867076,
+        "MEDICAL": 688411140,
+        "CONTINGENCY": 642287025,
+        "R&D": 698407091
       }
     },
 
