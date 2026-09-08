@@ -180,6 +180,9 @@ class RobloxConfig:
     #: Open Cloud base URL. Overridable in case the endpoint moves.
     api_base: str = "https://apis.roblox.com/cloud/v2"
     request_timeout: float = 15.0
+    #: Public group page, shown to registrants who are not members yet.
+    #: Derived from group_id when left blank.
+    group_url: str = ""
     #: Pause between role mutations. assignRole/unassignRole are limited to
     #: 300/min per API-key owner and reconciling a member costs one call per
     #: role, so a small gap keeps bulk syncs under the ceiling.
@@ -228,6 +231,12 @@ class RegistrationConfig:
     #:   "OAUTH" — Roblox OAuth 2.0 (default; no third-party opt-in needed)
     #:   "ROVER" — the legacy Rover lookup
     verification_method: str = "OAUTH"
+
+    #: Rank granted when the registrant is ALREADY in the Roblox group.
+    #: Someone outside the group gets `default_registration_rank` instead and is
+    #: told to join. Set to None to skip the group check entirely and always use
+    #: the default rank.
+    in_group_rank: "str | None" = None
 
 
 # ── Permission configuration ─────────────────────────────────────────────────
@@ -812,6 +821,10 @@ def load(path=None):
     cfg.registration.verification_method = str(
         cfg.registration.verification_method
     ).strip().upper()
+    if cfg.registration.in_group_rank:
+        cfg.registration.in_group_rank = str(
+            cfg.registration.in_group_rank
+        ).strip().upper()
     _apply_dataclass(cfg.sync, raw.get("sync"))
     cfg.sync.on_removal_roblox = str(cfg.sync.on_removal_roblox).strip().upper()
     cfg.sync.removal_roblox_role_id = _as_int(cfg.sync.removal_roblox_role_id)

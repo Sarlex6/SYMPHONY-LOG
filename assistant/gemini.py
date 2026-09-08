@@ -93,6 +93,25 @@ async def _call_model(session, model, payload):
     return False, None
 
 
+def _management_briefing():
+    """What Angela is told about her personnel-management abilities.
+
+    Returns "" when the role system is absent or unconfigured, so she is never
+    told she can do something that cannot actually run. Failures are logged
+    rather than swallowed: a silent miss here is exactly the bug where Angela
+    forgets she has these powers and nobody can tell why.
+    """
+    try:
+        from roles.angela_bridge import capability_briefing
+        return capability_briefing()
+    except ImportError as e:
+        print(f"[Gemini] Role management not installed, briefing skipped: {e}")
+        return ""
+    except Exception as e:
+        print(f"[Gemini] Could not build management briefing ({type(e).__name__}): {e}")
+        return ""
+
+
 async def generate_response(
     user_name,
     user_message,
@@ -106,16 +125,9 @@ async def generate_response(
 
     system_parts = [SYSTEM_PROMPT, "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE]
 
-    # Tell Angela about her personnel-management abilities, but only once the
-    # role system is actually configured — otherwise she would offer to perform
-    # actions that cannot run.
-    try:
-        from roles.angela_bridge import capability_briefing
-        briefing = capability_briefing()
-        if briefing:
-            system_parts.append("\n" + briefing)
-    except ImportError:
-        pass
+    briefing = _management_briefing()
+    if briefing:
+        system_parts.append("\n" + briefing)
 
     search_text = user_message
     if channel_context:
@@ -263,6 +275,13 @@ async def generate_gc_response(channel_context: list[dict]) -> str | None:
         return None
 
     system_instruction = SYSTEM_PROMPT + "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE
+
+    # The group-chat path needs this too. Without it Angela denies having
+    # any management capability whenever she is spoken to by name rather
+    # than @mentioned, which is how most people actually address her.
+    briefing = _management_briefing()
+    if briefing:
+        system_instruction += "\n\n" + briefing
 
     if channel_context:
         recent_text = " ".join(msg["content"] for msg in channel_context[-5:])

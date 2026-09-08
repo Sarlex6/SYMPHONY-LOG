@@ -206,7 +206,8 @@ async def _try_role_management(message, user_text):
     """
     try:
         from roles import angela_bridge
-    except ImportError:
+    except ImportError as e:
+        print(f"[Assistant] Role management not installed: {e}")
         return False
 
     try:
@@ -296,6 +297,15 @@ async def _handle_gc_response(message, force=False):
     _gc_processing.add(channel_id)
 
     try:
+        # Someone can address Angela by name instead of @mentioning her, which
+        # lands here rather than in _handle_direct_response. Route management
+        # requests from this path too, but only when the message actually names
+        # her - otherwise she would act on any passing mention of a rank.
+        if gc_mod.is_activation_trigger(message.content):
+            if await _try_role_management(message, _clean_mention(message.content)):
+                gc_mod.record_response(channel_id)
+                return
+
         channel_context = await _get_channel_context(message, include_current=True)
 
         if not force:

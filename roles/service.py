@@ -230,6 +230,62 @@ class RoleManagerService:
             discord_username=discord_username,
         )
 
+    async def _registration_rank(self, roblox_id, cfg):
+        """Pick the starting rank from Roblox group membership.
+
+        Already in the group -> `registration.in_group_rank`.
+        Not in the group     -> `default_registration_rank`, and they are told
+                                to join in order to be ranked properly.
+
+        Returns (rank_key, in_group) where in_group is True / False / None.
+        None means the check could not be run; the default rank is used, because
+        quietly granting the higher rank on an API outage would be worse than
+        making someone ask for a promotion.
+        """
+        default_rank = (
+            cfg.rank(cfg.default_registration_rank).key
+            if cfg.default_registration_rank and cfg.rank(cfg.default_registration_rank)
+            else ""
+        )
+
+        target = cfg.registration.in_group_rank
+        if not target or not cfg.rank(target):
+            # No in-group rank configured: skip the check entirely.
+            return default_rank, None
+
+        from roles.roblox_sync import synchronizer as roblox_synchronizer
+        in_group = await roblox_synchronizer.is_group_member(roblox_id, cfg)
+
+        if in_group is True:
+            print(f"[Roles] {roblox_id} is in the Roblox group -> {cfg.rank(target).key}")
+            return cfg.rank(target).key, True
+
+        if in_group is False:
+            print(f"[Roles] {roblox_id} is NOT in the Roblox group -> {default_rank}")
+        else:
+            print(f"[Roles] Roblox group membership for {roblox_id} could not be "
+                  f"verified; using {default_rank}.")
+
+        return default_rank, in_group
+
+    @staticmethod
+    def _group_join_prompt(in_group, cfg):
+        """What to tell a registrant about group membership, if anything."""
+        if in_group is True or in_group is None:
+            return ""
+
+        url = cfg.roblox.group_url or (
+            f"https://www.roblox.com/groups/{cfg.roblox.group_id}"
+            if cfg.roblox.group_id else ""
+        )
+        where = f" ({url})" if url else ""
+        return (
+            f":warning: You are not in our Roblox group yet, so you have been "
+            f"registered as an applicant. **Join the group**{where} and ask a "
+            f"staff member to re-check your registration to receive a proper rank "
+            f"and the access that comes with it."
+        )
+
     async def _create_record(self, context, roblox_id, roblox_username, discord_username):
         """Create the PERSONNEL record once a Roblox identity is verified."""
         cfg = roles_config.current()
@@ -241,6 +297,8 @@ class RoleManagerService:
                 f"{existing.label()}. Contact an administrator if this is wrong."
             )
 
+        rank_key, in_group = await self._registration_rank(roblox_id, cfg)
+
         record = UserRecord(
             record_uid=new_record_uid(),
             discord_id=context.actor_discord_id,
@@ -249,15 +307,7 @@ class RoleManagerService:
             # Column K is set once, here, and never touched again.
             entry_date=format_entry_date(),
             status=Status.ACTIVE,
-            # TODO: set `default_registration_rank` in roles_config.json once the
-            # rank definitions arrive. Until then a new record gets a blank rank,
-            # which sorts to the bottom of its section and synchronizes nothing —
-            # deliberately inert rather than a guessed starting rank.
-            rank_key=(
-                cfg.rank(cfg.default_registration_rank).key
-                if cfg.default_registration_rank and cfg.rank(cfg.default_registration_rank)
-                else ""
-            ),
+            rank_key=rank_key,
             branch_key=roles_config.NA_BRANCH_KEY,
             sync_status=SyncStatus.NEVER,
             source=ChangeSource.SYSTEM,
@@ -275,12 +325,20 @@ class RoleManagerService:
         )
         job = self.sync_queue.enqueue(saved, reason="registration")
 
-        return ActionResult.success(
+        message = (
             f"Registered. Roblox account **{roblox_username or roblox_id}** "
-            f"linked, entry date **{saved.entry_date}**, placed at {placement}.",
+            f"linked, entry date **{saved.entry_date}**, placed at {placement}."
+        )
+        prompt = self._group_join_prompt(in_group, cfg)
+        if prompt:
+            message += "\n\n" + prompt
+
+        return ActionResult.success(
+            message,
             record=saved,
             queued_targets=["DISCORD", "ROBLOX"] if job else [],
             roblox_id=roblox_id,
+            in_roblox_group=in_group,
         )
 
     # ── Field mutations ──

@@ -44,7 +44,7 @@
       "order": 0,
       "special": false,
       "main_discord_role_id": 1360740875277434900,
-      "main_aux_discord_role_ids": [],
+      "main_aux_discord_role_ids": [1360741001781575931],
       "syncs_roblox": false,
       "roblox_roles_by_branch": {
         "N/A": null,
@@ -426,7 +426,7 @@
     "Left null on purpose: a new record gets a blank rank, which sorts to the bottom",
     "of its section and synchronizes nothing, rather than a guessed starting rank."
   ],
-  "default_registration_rank": null,
+  "default_registration_rank": "APPLICANT",
 
   "discord": {
     "_comment": "main_guild_id is the designated server where /register is used.",
@@ -453,7 +453,9 @@
     "until Roblox approves it for public mode. Submit it for review before rollout."
   ],
   "registration": {
-    "verification_method": "OAUTH"
+    "verification_method": "OAUTH",
+    "_in_group_rank_comment": "Rank when the registrant is ALREADY in the Roblox group. Not in the group -> default_registration_rank, plus a prompt to join. null skips the check.",
+    "in_group_rank": "TRAINING_ASSOCIATE"
   },
 
   "roblox_oauth": {
@@ -530,7 +532,8 @@
       "SET_RANK": {
         "min_rank_order": null,
         "grants": [
-          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] },
+          { "allowed_relations": ["SELF"], "allowed_categories": ["HIGH-RANK"] }
         ],
         "note": "high ranks only. Supply allowed_relations (likely LOWER) and a min_rank_order."
       },
@@ -538,8 +541,7 @@
         "min_rank_order": null,
         "grants": [
           { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] },
-          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
-
+          { "allowed_relations": ["SELF"], "allowed_categories": ["HIGH-RANK"] }
         ],
         "note": "high ranks only. Same shape as SET_RANK."
       },
@@ -606,6 +608,6 @@
     "removal_roblox_role_id": null,
 
     "_manage_status_formatting_comment": "Installs conditional-format rules on column J. Off by default so it never clobbers hand-made rules.",
-    "manage_status_formatting": false
+    "manage_status_formatting": true
   }
 }

@@ -81,6 +81,34 @@ class RobloxSynchronizer:
             return False
         return bool(self.desired_assignments(record, cfg))
 
+    async def is_group_member(self, roblox_id, cfg=None):
+        """Is this Roblox user in the main group?
+
+        Tri-state on purpose:
+            True  - confirmed member
+            False - confirmed NOT a member
+            None  - could not be checked (no key, no group configured, API down)
+
+        None is distinct from False because callers grant rank on the answer.
+        Treating an outage as "not a member" would quietly hand every new member
+        the wrong rank for as long as the API was unhappy.
+        """
+        cfg = cfg or roles_config.current()
+        api_key = roles_config.secret("ROBLOX_API_KEY")
+
+        if not roblox_id or not api_key or not cfg.roblox.group_id:
+            return None
+
+        membership = await self._find_membership(
+            cfg, api_key, cfg.roblox.group_id, roblox_id
+        )
+        if membership.error:
+            print(f"[Roles:Roblox] Group membership check failed for {roblox_id}: "
+                  f"{membership.error}")
+            return None
+
+        return membership.path is not None
+
     # ── Application ──
 
     async def sync_record(self, record, cfg=None, dry_run=False, strip=False):

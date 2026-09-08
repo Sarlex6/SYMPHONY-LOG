@@ -106,7 +106,7 @@ def _parse_enum(enum_cls, raw, default):
         return default
 
 
-def record_to_cells(record, row_number, cfg, include_notes=None):
+def record_to_cells(record, row_number, cfg, include_notes=None, write_category=True):
     """Every cell for one record at one row.
 
     Column F and G are written as the configured *display* strings so they match
@@ -120,7 +120,9 @@ def record_to_cells(record, row_number, cfg, include_notes=None):
     category = layout.effective_category(record, cfg)
 
     values = {
-        columns.COL_CATEGORY: category.value if category else "",
+        # Only the top row of a category block carries the label; the rest are
+        # blanked so the merged cell shows it once. See normalize_managed_merges.
+        columns.COL_CATEGORY: (category.value if category else "") if write_category else "",
         columns.COL_IDENTIFICATION: record.discord_username,
         columns.COL_TIMEZONE: record.timezone,
         columns.COL_RANK: rank_display,
@@ -406,6 +408,16 @@ class PersonnelRepository:
                       f"({record.rank_key or 'no rank'})")
 
         plan = await self._apply_layout(records, cfg)
+
+        # Unconditionally here, unlike the incremental path: /roles restructure
+        # is the lever for repairing colours after the sheet was edited by hand.
+        if cfg.sync.manage_status_formatting:
+            try:
+                await self.gateway.ensure_status_formatting(self._footer_row)
+            except Exception as exc:
+                print(f"[Roles] Could not refresh status colours: "
+                      f"{type(exc).__name__}: {exc}")
+
         return plan, purged
 
     async def _apply_layout(self, records, cfg):
@@ -421,6 +433,19 @@ class PersonnelRepository:
                 plan.rows_to_insert, self._footer_row
             )
 
+        # Category blocks in final sheet coordinates, for the merge pass.
+        sections = []
+        for category, (first, last) in layout.category_boundaries(
+                plan.ordered_records, cfg).items():
+            if last >= first:
+                sections.append((first, last))
+        section_tops = {first for first, _ in sections}
+
+        # Unmerge BEFORE writing. A write aimed at any cell of a merged range
+        # other than its anchor is silently dropped by the Sheets API, which is
+        # how a leftover design merge makes a row's STATUS text disappear.
+        await self.gateway.normalize_managed_merges([], self._footer_row)
+
         cells = []
         for index, record in enumerate(plan.ordered_records):
             row_number = columns.FIRST_MANAGED_ROW + index
@@ -428,7 +453,10 @@ class PersonnelRepository:
                 row=row_number,
                 category=layout.effective_category(record, cfg),
             )
-            cells.extend(record_to_cells(positioned, row_number, cfg))
+            cells.extend(record_to_cells(
+                positioned, row_number, cfg,
+                write_category=row_number in section_tops,
+            ))
 
         # Blank the tail before shrinking, so a failed delete leaves EMPTY rows
         # rather than a duplicated copy of somebody's record.
@@ -442,6 +470,20 @@ class PersonnelRepository:
             self._footer_row = await self.gateway.delete_managed_rows(
                 plan.rows_to_delete, self._footer_row
             )
+
+        # Merge the category blocks now that every value is in place.
+        if sections:
+            await self.gateway.normalize_managed_merges(sections, self._footer_row)
+
+        # The conditional-format range is tied to the managed area, so it has
+        # to follow whenever the row count moves.
+        if cfg.sync.manage_status_formatting and (
+                plan.rows_to_insert or plan.rows_to_delete):
+            try:
+                await self.gateway.ensure_status_formatting(self._footer_row)
+            except Exception as exc:
+                print(f"[Roles] Could not refresh status colours: "
+                      f"{type(exc).__name__}: {exc}")
 
         await self.load()
 

@@ -321,6 +321,67 @@ async def ensure_technical_columns():
     print("[Roles] Technical columns configured (hidden, minimal width).")
 
 
+def _column_range(sheet_id, col, first_row, last_row):
+    """A1-free grid range covering one column across a row span."""
+    return {
+        "sheetId": sheet_id,
+        "startRowIndex": first_row - 1,
+        "endRowIndex": last_row,
+        "startColumnIndex": col - 1,
+        "endColumnIndex": col,
+    }
+
+
+async def normalize_managed_merges(sections, footer_row):
+    """Rebuild the merges the managed area depends on.
+
+    Two things happen here, in one batch:
+
+      * Column J is UNMERGED across the managed area. Status is a per-row value,
+        and the Sheets API silently discards a write aimed at any cell of a merged
+        range other than its top-left anchor - so a leftover design merge makes
+        a row's STATUS text vanish while its neighbour's sticks.
+
+      * Column C is unmerged and then re-merged once per category block, so the
+        section label reads "HIGH-RANK" a single time down the whole block
+        instead of being repeated on every row.
+
+    `sections` is [(first_row, last_row), ...] in sheet coordinates. Blocks of a
+    single row are left unmerged - a one-cell merge is meaningless.
+    """
+    worksheet = await get_worksheet()
+    last_row = columns.last_managed_row(footer_row)
+    if last_row < columns.FIRST_MANAGED_ROW:
+        return
+
+    requests = [
+        {"unmergeCells": {"range": _column_range(
+            worksheet.id, columns.COL_STATUS, columns.FIRST_MANAGED_ROW, last_row)}},
+        {"unmergeCells": {"range": _column_range(
+            worksheet.id, columns.COL_CATEGORY, columns.FIRST_MANAGED_ROW, last_row)}},
+    ]
+
+    merged = 0
+    for first, last in sections:
+        if last > first:
+            requests.append({"mergeCells": {
+                "range": _column_range(worksheet.id, columns.COL_CATEGORY, first, last),
+                "mergeType": "MERGE_ALL",
+            }})
+            merged += 1
+
+    try:
+        await asyncio.to_thread(spreadsheet.batch_update, {"requests": requests})
+    except gspread.exceptions.APIError as exc:
+        # Never fatal: the values are already written and correct. A failed merge
+        # is cosmetic, and retrying it on the next layout pass costs nothing.
+        print(f"[Roles] Could not rebuild category merges: {exc}")
+        return
+
+    if merged:
+        print(f"[Roles] Category column merged into {merged} block(s).")
+
+
 #: Column J background colours, exactly as specified.
 STATUS_COLORS = {
     "ACTIVE":      {"red": 0.72, "green": 0.88, "blue": 0.72},  # light green
@@ -331,28 +392,58 @@ STATUS_COLORS = {
 
 
 async def ensure_status_formatting(footer_row):
-    """Install conditional-format rules for column J.
+    """Install conditional-format rules so column J colours follow its text.
 
-    Off by default (sync.manage_status_formatting) because adding rules to a
-    sheet that already has hand-made ones is the kind of change that should be
-    deliberate. Appends rules; it does not clear existing ones.
+    Idempotent: any rule this system previously installed on column J is removed
+    first, so repeated calls do not stack duplicates and the range always matches
+    the current managed area.
+
+    Conditional formatting takes precedence over a cell's static fill, so this
+    also corrects rows whose background was painted by hand in the original
+    design and would otherwise never change colour.
     """
     worksheet = await get_worksheet()
     last_row = columns.last_managed_row(footer_row)
+    if last_row < columns.FIRST_MANAGED_ROW:
+        return
+
+    try:
+        meta = await asyncio.to_thread(spreadsheet.fetch_sheet_metadata)
+    except gspread.exceptions.APIError as exc:
+        raise TransientSyncError(f"Could not read sheet metadata: {exc}") from exc
+
+    # Identify rules we own: a TEXT_EQ on one of our status words, over column J.
+    stale = []
+    for sheet in meta.get("sheets", []):
+        if sheet.get("properties", {}).get("sheetId") != worksheet.id:
+            continue
+        for index, rule in enumerate(sheet.get("conditionalFormats") or []):
+            condition = rule.get("booleanRule", {}).get("condition", {})
+            if condition.get("type") != "TEXT_EQ":
+                continue
+            values = [v.get("userEnteredValue") for v in condition.get("values", [])]
+            if not values or values[0] not in STATUS_COLORS:
+                continue
+            if any(r.get("startColumnIndex") == columns.COL_STATUS - 1
+                   for r in rule.get("ranges", [])):
+                stale.append(index)
 
     requests = []
-    for index, (status_text, color) in enumerate(STATUS_COLORS.items()):
+    # Descending, so each deletion does not shift the indices still to come.
+    for index in sorted(stale, reverse=True):
+        requests.append({"deleteConditionalFormatRule": {
+            "sheetId": worksheet.id, "index": index,
+        }})
+
+    for position, (status_text, color) in enumerate(STATUS_COLORS.items()):
         requests.append({
             "addConditionalFormatRule": {
-                "index": index,
+                "index": position,
                 "rule": {
-                    "ranges": [{
-                        "sheetId": worksheet.id,
-                        "startRowIndex": columns.FIRST_MANAGED_ROW - 1,
-                        "endRowIndex": last_row,
-                        "startColumnIndex": columns.COL_STATUS - 1,
-                        "endColumnIndex": columns.COL_STATUS,
-                    }],
+                    "ranges": [_column_range(
+                        worksheet.id, columns.COL_STATUS,
+                        columns.FIRST_MANAGED_ROW, last_row,
+                    )],
                     "booleanRule": {
                         "condition": {
                             "type": "TEXT_EQ",
@@ -369,7 +460,8 @@ async def ensure_status_formatting(footer_row):
     except gspread.exceptions.APIError as exc:
         raise TransientSyncError(f"Failed to install status formatting: {exc}") from exc
 
-    print("[Roles] Status conditional formatting installed for column J.")
+    print(f"[Roles] Status colours applied to column J "
+          f"(replaced {len(stale)} previous rule(s)).")
 
 
 async def set_dropdown_values(col, values, footer_row):
