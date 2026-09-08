@@ -538,11 +538,15 @@ async def set_dropdown_values(col, values, footer_row):
     So this:
 
       * reads the rule that is already there;
-      * does nothing at all when the value list already matches, which is the
-        normal case on every restart;
-      * when the list genuinely changed, edits ONLY `condition.values` on the
-        existing rule and writes that back, leaving every other property of the
-        rule exactly as it was found.
+      * compares the offered values as a SET, so re-ordering the dropdown by
+        hand is not mistaken for a content change. Order is a presentation
+        choice belonging to the sheet, not to the configuration;
+      * does nothing at all when the same values are already offered, which is
+        the normal case on every restart;
+      * when a value is genuinely added or removed, keeps the sheet's existing
+        order for everything that survives, appends only what is new, and edits
+        ONLY `condition.values` on the existing rule - every other property is
+        written back exactly as it was found.
 
     Refuses any column other than F and G.
     """
@@ -570,16 +574,46 @@ async def set_dropdown_values(col, values, footer_row):
         else await _read_validation_rule(worksheet, col, last_row)
     )
 
-    if _rule_values(first_rule) == values and _rule_values(last_rule) == values:
-        print(f"[Roles] Column {letter} dropdown already matches configuration "
-              f"({len(values)} value(s)); styling left untouched.")
+    existing_first = _rule_values(first_rule)
+    existing_last = _rule_values(last_rule)
+
+    # Compare as SETS, not sequences. The order entries appear in is a
+    # presentation choice made in the sheet, and the configuration has no
+    # business overriding it - comparing sequences meant that merely sorting the
+    # dropdown by hand looked like a content change and cost the styling on the
+    # next restart.
+    desired = set(values)
+    if (existing_first is not None and set(existing_first) == desired
+            and existing_last is not None and set(existing_last) == desired):
+        print(f"[Roles] Column {letter} dropdown already offers the right "
+              f"{len(values)} value(s); order and styling left untouched.")
         return
+
+    # Something really did change. Disturb as little as possible: keep the
+    # sheet's own order for values that survive, and append only what is new.
+    if existing_first:
+        kept = [v for v in existing_first if v in desired]
+        added = [v for v in values if v not in set(existing_first)]
+        removed = [v for v in existing_first if v not in desired]
+        final_values = kept + added
+        detail = []
+        if added:
+            detail.append(f"added {added}")
+        if removed:
+            detail.append(f"removed {removed}")
+        print(f"[Roles] Column {letter} dropdown changing: "
+              f"{'; '.join(detail) or 'rule repaired'}.")
+    else:
+        # No usable rule on the sheet - fall back to configuration order.
+        final_values = values
+        print(f"[Roles] Column {letter} has no dropdown; creating one with "
+              f"{len(values)} value(s).")
 
     # Start from whatever is on the sheet so styling and options survive.
     rule = dict(first_rule) if first_rule else {"showCustomUi": True, "strict": False}
     condition = dict(rule.get("condition") or {})
     condition["type"] = "ONE_OF_LIST"
-    condition["values"] = [{"userEnteredValue": v} for v in values]
+    condition["values"] = [{"userEnteredValue": v} for v in final_values]
     rule["condition"] = condition
     # Never reject a manual edit: the sheet is the source of truth, so a value
     # typed by hand must be allowed to stand even if it is off-list.
@@ -607,6 +641,6 @@ async def set_dropdown_values(col, values, footer_row):
             f"Failed to update column {letter} dropdown: {exc}"
         ) from exc
 
-    previous = _rule_values(first_rule)
-    print(f"[Roles] Column {letter} dropdown updated: "
-          f"{len(previous) if previous else 0} -> {len(values)} value(s).")
+    print(f"[Roles] Column {letter} dropdown written: "
+          f"{len(existing_first) if existing_first else 0} -> "
+          f"{len(final_values)} value(s).")
