@@ -308,6 +308,43 @@
       }
     },
 
+    "CHIEF-EXECUTIVE_OFFICER": {
+      "display": "CHIEF-EXECUTIVE OFFICER",
+      "category": "HIGH-RANK",
+      "order": 15,
+      "special": false,
+      "main_discord_role_id": 1360740867274444841,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284574764830762, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108615704,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "DEVELOPMENT_HEAD": {
+      "display": "DEVELOPMENT_HEAD",
+      "category": "HIGH-RANK",
+      "order": 12,
+      "special": true,
+      "special_group_order": 1,
+      "main_discord_role_id": 1472730025391423662,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": 108616203,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
     "_EXAMPLE_SPECIAL_RANK": {
       "display": "PLACEHOLDER SPECIAL RANK",
       "category": "HIGH-RANK",
@@ -354,6 +391,30 @@
         "_EXAMPLE_NORMAL_RANK": null
       },
       "main_aux_discord_role_ids": [1372811213091766292]
+    },
+    "MEDICAL": {
+      "display": "MEDICAL",
+      "discord_guild_id": 1478552893085716563, 
+      "discord_roles_by_rank": {
+        "_EXAMPLE_NORMAL_RANK": null
+      },
+      "main_aux_discord_role_ids": [1372811127888547941]
+    },
+    "R&D": {
+      "display": "R&D",
+      "discord_guild_id": 1478552893085716563,
+      "discord_roles_by_rank": {
+        "_EXAMPLE_NORMAL_RANK": null
+      },
+      "main_aux_discord_role_ids": [1372811383049293885]
+    },
+    "CONTINGENCY": {
+      "display": "CONTINGENCY",
+      "discord_guild_id": 1478552893085716563,
+      "discord_roles_by_rank": {
+        "_EXAMPLE_NORMAL_RANK": null
+      },
+      "main_aux_discord_role_ids": [1372811280196571136]
     }
     
   },
