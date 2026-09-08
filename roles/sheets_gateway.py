@@ -75,11 +75,22 @@ async def get_footer_row():
     worksheet = await get_worksheet()
     footer = await asyncio.to_thread(lambda: worksheet.row_count)
 
-    if footer < columns.FIRST_MANAGED_ROW + 1:
+    if footer < columns.FIRST_MANAGED_ROW:
         raise SheetStructureError(
-            f"PERSONNEL has {footer} rows; the managed area starts at row "
-            f"{columns.FIRST_MANAGED_ROW} and needs a footer row below it."
+            f"PERSONNEL has only {footer} row(s); the managed area starts at row "
+            f"{columns.FIRST_MANAGED_ROW}. The sheet is missing its header rows - "
+            f"restore it from a backup."
         )
+
+    if footer == columns.FIRST_MANAGED_ROW:
+        # Zero managed rows: degraded, but readable. Tolerated rather than
+        # raised so the system can repair itself on the next write instead of
+        # locking up until someone edits the sheet by hand.
+        print(
+            f"[Roles] PERSONNEL has no managed rows (footer at row {footer}). "
+            f"Rows will be re-inserted on the next write."
+        )
+        return footer
 
     if footer != columns.EXPECTED_FOOTER_ROW:
         # Expected after the first resize. Informational, never fatal.
@@ -209,8 +220,10 @@ async def delete_managed_rows(count, footer_row):
     if count <= 0:
         return footer_row
 
+    # Defence in depth: even if a caller asks for more, never take the managed
+    # area below its floor.
     available = columns.managed_row_count(footer_row)
-    count = min(count, max(0, available))
+    count = min(count, max(0, available - columns.MIN_MANAGED_ROWS))
     if count <= 0:
         return footer_row
 

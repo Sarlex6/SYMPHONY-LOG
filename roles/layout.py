@@ -147,7 +147,10 @@ def plan_layout(records, cfg, footer_row):
     plan = LayoutPlan(ordered, footer_row)
 
     capacity = columns.managed_row_count(footer_row)
-    needed = len(ordered) + columns.SLACK_ROWS
+    # Never plan the managed area out of existence: an empty roster still
+    # keeps MIN_MANAGED_ROWS rows, or the sheet ends up in a shape the reader
+    # refuses and formatting inheritance breaks. See columns.MIN_MANAGED_ROWS.
+    needed = max(len(ordered) + columns.SLACK_ROWS, columns.MIN_MANAGED_ROWS)
 
     if needed > capacity:
         plan.rows_to_insert = needed - capacity

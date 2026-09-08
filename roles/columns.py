@@ -46,6 +46,19 @@ EXPECTED_FOOTER_ROW = 113
 #: few EMPTY rows for fewer insert/delete API calls.
 SLACK_ROWS = 0
 
+#: The managed area is never shrunk below this many rows, even with an empty
+#: roster. Two reasons, both load-bearing:
+#:
+#:   1. Zero managed rows puts the footer directly under the header, which is a
+#:      structure the reader rejects - it would take the whole system down until
+#:      someone repaired the sheet by hand.
+#:   2. Row insertion uses inheritFromBefore, so new rows copy the formatting of
+#:      the row above them. With no managed rows left, that row is the HEADER,
+#:      and every new record row would inherit header formatting.
+#:
+#: One surviving row is enough for both; it simply shows as EMPTY.
+MIN_MANAGED_ROWS = 1
+
 #: Writing technical column headers would touch row 9, which is above the
 #: managed area. Off by default; enable deliberately if the header row is wanted.
 WRITE_TECH_HEADERS = False
