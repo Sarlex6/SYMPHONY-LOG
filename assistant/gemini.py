@@ -106,6 +106,17 @@ async def generate_response(
 
     system_parts = [SYSTEM_PROMPT, "\nREFERENCE KNOWLEDGE:\n" + STATIC_KNOWLEDGE]
 
+    # Tell Angela about her personnel-management abilities, but only once the
+    # role system is actually configured — otherwise she would offer to perform
+    # actions that cannot run.
+    try:
+        from roles.angela_bridge import capability_briefing
+        briefing = capability_briefing()
+        if briefing:
+            system_parts.append("\n" + briefing)
+    except ImportError:
+        pass
+
     search_text = user_message
     if channel_context:
         recent_channel_text = " ".join(msg["content"] for msg in channel_context[-5:])
@@ -191,6 +202,49 @@ async def generate_response(
     except Exception as e:
         print(f"[Gemini] Unexpected error ({type(e).__name__}): {e}")
         return "An unexpected error occurred. I am logging this for analysis."
+
+
+# ── Generic single-turn helpers ──────────────────────────────────────────────
+# Used by roles/angela_bridge.py so it reuses this module's model fallback and
+# retry handling instead of duplicating it.
+
+async def _generate_once(system_instruction, user_text, generation_overrides=None):
+    """One prompt, one response, with the same primary/fallback model chain."""
+    if not GEMINI_API_KEY:
+        return None
+
+    contents = [{"role": "user", "parts": [{"text": user_text}]}]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            for model in [PRIMARY_MODEL, FALLBACK_MODEL]:
+                payload = _build_payload(system_instruction, contents, model)
+                if generation_overrides:
+                    payload["generationConfig"].update(generation_overrides)
+                success, response = await _call_model(session, model, payload)
+                if success:
+                    return response
+        return None
+    except Exception as e:
+        print(f"[Gemini] Single-turn error ({type(e).__name__}): {e}")
+        return None
+
+
+async def generate_json(system_instruction, user_text):
+    """Structured JSON response. Returns the raw JSON string, or None on failure."""
+    return await _generate_once(system_instruction, user_text, {
+        "temperature": 0.1,
+        "maxOutputTokens": 512,
+        "responseMimeType": "application/json",
+    })
+
+
+async def generate_plain(system_instruction, user_text):
+    """Short in-character prose response. Returns None on failure."""
+    return await _generate_once(system_instruction, user_text, {
+        "temperature": 0.7,
+        "maxOutputTokens": 512,
+    })
 
 
 _GC_ADDENDUM = (

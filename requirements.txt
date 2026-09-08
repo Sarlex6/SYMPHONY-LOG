@@ -1,3 +1,5 @@
 discord.py
 gspread
 google-generativeai
+aiohttp
+tzdata

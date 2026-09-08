@@ -39,6 +39,22 @@ async def run_assistant_bot():
         await asyncio.sleep(RECONNECT_DELAY)
 
 
+async def run_roles_bot():
+    """Run the role management bot with auto-reconnect."""
+    while True:
+        try:
+            from roles.bot import bot
+
+            print("[Main] Roles bot connecting...")
+            await bot.start(config["ROLES_TOKEN"])
+
+        except Exception as e:
+            print(f"[Main] Roles bot error: {type(e).__name__}: {e}")
+
+        print(f"[Main] Roles bot disconnected. Reconnecting in {RECONNECT_DELAY}s...")
+        await asyncio.sleep(RECONNECT_DELAY)
+
+
 async def main():
     # ── Start HTTP server ─────────────────────────────────────────────────
     try:
@@ -58,11 +74,19 @@ async def main():
     # ── Start bots with auto-reconnect ────────────────────────────────────
     tasks = [asyncio.create_task(run_inventory_bot())]
 
+    running = ["inventory"]
+
     if config.get("ASSISTANT_TOKEN"):
         tasks.append(asyncio.create_task(run_assistant_bot()))
-        print("[Main] Both bots starting with auto-reconnect...")
+        running.append("assistant")
+
+    if config.get("ROLES_TOKEN"):
+        tasks.append(asyncio.create_task(run_roles_bot()))
+        running.append("roles")
     else:
-        print("[Main] Inventory bot only (no ASSISTANT_TOKEN).")
+        print("[Main] Roles bot skipped (no ROLES_TOKEN).")
+
+    print(f"[Main] Starting with auto-reconnect: {', '.join(running)}")
 
     await asyncio.gather(*tasks)
 

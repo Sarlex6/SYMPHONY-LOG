@@ -195,11 +195,52 @@ async def on_message(message):
             await _handle_gc_response(message, force=True)
 
 
+async def _try_role_management(message, user_text):
+    """Route a role-management request through the Role Manager.
+
+    Angela translates the request and phrases the reply, but the Role Manager
+    independently identifies the Discord author and runs the same authorization
+    checks a slash command would. Angela is an interface, not an authority.
+
+    Returns True if the message was handled as a management request.
+    """
+    try:
+        from roles import angela_bridge
+    except ImportError:
+        return False
+
+    try:
+        reply = await angela_bridge.handle_message(message, user_text)
+    except Exception as e:
+        print(f"[Assistant] Role management bridge error: {type(e).__name__}: {e}")
+        return False
+
+    if not reply:
+        return False
+
+    if len(reply) <= 2000:
+        await message.reply(reply, mention_author=False)
+    else:
+        for i, chunk in enumerate(_split_response(reply)):
+            if i == 0:
+                await message.reply(chunk, mention_author=False)
+            else:
+                await message.channel.send(chunk)
+
+    return True
+
+
 async def _handle_direct_response(message):
     """Respond to a message that directly mentioned or replied to Angela."""
     user_text = _clean_mention(message.content)
     user_name = message.author.display_name
     user_id = message.author.id
+
+    # Management requests take precedence over conversation. Silently falls
+    # through to the normal path when this is not one.
+    async with message.channel.typing():
+        if await _try_role_management(message, user_text):
+            return
 
     replied_message = await _get_replied_message(message)
     channel_context = await _get_channel_context(message)

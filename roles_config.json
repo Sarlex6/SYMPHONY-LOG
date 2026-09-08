@@ -1,0 +1,550 @@
+{
+  "_README": [
+    "Copy this file to roles_config.json and fill in the real values.",
+    "EVERY id, name and mapping below is a PLACEHOLDER. null means 'not supplied yet' —",
+    "the system disables the dependent synchronization path instead of guessing.",
+    "Secrets (ROLES_TOKEN, ROVER_API_KEY, ROBLOX_API_KEY) do NOT belong here.",
+    "They go in config.json / environment variables like every other secret in this project.",
+    "Any key starting with an underscore is ignored by the loader, so notes are safe to leave in."
+  ],
+
+  "_ranks_README": [
+    "14 normal ranks (Training Associate .. Branch Head) + a 15th Owner/CEO rank, plus special ranks.",
+    "key                    stable internal id, UPPERCASE, never shown to users",
+    "display                the exact string in the column F dropdown",
+    "category               HIGH-RANK | MID-RANK | LOW-RANK",
+    "order                  higher = more senior. Drives sorting AND rank comparison in permissions.",
+    "special                false for the 15 normal ranks, true for special ranks",
+    "special_group_order    groups special ranks together in the sort (all Overseers, then all Ambassadors)",
+    "main_discord_role_id   primary role id in the main server",
+    "main_aux_discord_role_ids  extra MAIN-SERVER-ONLY roles this rank also grants.",
+    "                       Auxiliary roles are never applied in branch servers.",
+    "                       They are managed, so obsolete ones are removed on a rank change.",
+    "roblox_roles_by_branch { BRANCH_KEY: roblox_group_role_id }.",
+    "                       ADDITIVE, not alternatives. The \"N/A\" entry is the BASELINE and is",
+    "                       ALWAYS applied. A branch entry is applied ON TOP of it, so a member",
+    "                       of ECHELON receives both the N/A role and the ECHELON role.",
+    "                       An empty object means this rank has NO Roblox equivalent.",
+    "",
+    "                       Applied with Open Cloud assignRole / unassignRole, so a member can",
+    "                       hold several roles in one group at once. Only roles configured here",
+    "                       are ever unassigned — anything granted for another reason survives.",
+    "                       Every change is verified by re-reading the membership, because a key",
+    "                       without group:write can return 200 without applying anything.",
+    "",
+    "                       Optional per-entry form, if a branch role lives in a different group:",
+    "                         \"ECHELON\": { \"role_id\": 1, \"group_id\": 12345 }",
+    "                       or set branches.<KEY>.roblox_group_id once for that whole branch.",
+    "syncs_roblox           defaults to true for normal ranks, false for special ranks."
+  ],
+  "ranks": {
+    "APPLICANT": {
+      "display": "Applicant",
+      "category": "LOW-RANK",
+      "order": 0,
+      "special": false,
+      "main_discord_role_id": 1360740875277434900,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "TRAINING_ASSOCIATE": {
+      "display": "Training Associate",
+      "category": "LOW-RANK",
+      "order": 1,
+      "special": false,
+      "main_discord_role_id": 1360740874547367996,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378283853168513175],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108666463,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "JUNIOR_ASSOCIATE": {
+      "display": "Junior Associate",
+      "category": "LOW-RANK",
+      "order": 2,
+      "special": false,
+      "main_discord_role_id": 1360740873217769483,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378283853168513175],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108666454,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "ASSOCIATE": {
+      "display": "Associate",
+      "category": "LOW-RANK",
+      "order": 3,
+      "special": false,
+      "main_discord_role_id": 1360740872546816169,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378283853168513175],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108663748,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "SENIOR_ASSOCIATE": {
+      "display": "Senior Associate",
+      "category": "LOW-RANK",
+      "order": 4,
+      "special": false,
+      "main_discord_role_id": 1360740871867207802,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284193108332594],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108663747,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "SPECIALIST": {
+      "display": "Specialist",
+      "category": "LOW-RANK",
+      "order": 5,
+      "special": false,
+      "main_discord_role_id": 1360740871485788310,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284193108332594],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108663737,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "SENIOR_SPECIALIST": {
+      "display": "Senior Specialist",
+      "category": "MID-RANK",
+      "order": 6,
+      "special": false,
+      "main_discord_role_id": 1374475374444155032,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284279347286098, 1372890578840457357],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 382936000,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "TEAM_LEADER": {
+      "display": "Team Leader",
+      "category": "MID-RANK",
+      "order": 7,
+      "special": false,
+      "main_discord_role_id": 1374475427543777471,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284279347286098, 1372890578840457357, 1372346058214080545],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 382382000,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "OPERATIONS_COORDINATOR": {
+      "display": "Operations Coordinator",
+      "category": "MID-RANK",
+      "order": 8,
+      "special": false,
+      "main_discord_role_id": 1374475752581365883,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284279347286098, 1372890578840457357, 1372346058214080545],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108616195,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "OPERATIONS_MANAGER": {
+      "display": "Operations Manager",
+      "category": "MID-RANK",
+      "order": 9,
+      "special": false,
+      "main_discord_role_id": 1374476263149928498,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284279347286098, 1372890578840457357, 1372346058214080545],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108616201,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "BRANCH_SUPERVISOR": {
+      "display": "Branch Supervisor",
+      "category": "HIGH-RANK",
+      "order": 10,
+      "special": false,
+      "main_discord_role_id": 1360740870634209550,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108616203,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "BRANCH_MANAGER": {
+      "display": "Branch Manager",
+      "category": "HIGH-RANK",
+      "order": 11,
+      "special": false,
+      "main_discord_role_id": 1360740869933764669,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 381902001,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "BRANCH_EXECUTIVE": {
+      "display": "Branch Executive",
+      "category": "HIGH-RANK",
+      "order": 12,
+      "special": false,
+      "main_discord_role_id": 1374476995139993640,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 381968002,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "BRANCH_HEAD": {
+      "display": "Branch Head",
+      "category": "HIGH-RANK",
+      "order": 13,
+      "special": false,
+      "main_discord_role_id": 1360740869208146001,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 382924000,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "EXECUTIVE_TEAM": {
+      "display": "Executive Team",
+      "category": "HIGH-RANK",
+      "order": 14,
+      "special": false,
+      "main_discord_role_id": 1360740868033876060,
+      "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284574764830762, 1372890578840457357, 1372346058214080545, 1372346049255178301],
+      "syncs_roblox": true,
+      "roblox_roles_by_branch": {
+        "N/A": 108615705,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "_EXAMPLE_SPECIAL_RANK": {
+      "display": "PLACEHOLDER SPECIAL RANK",
+      "category": "HIGH-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 1,
+      "main_discord_role_id": null,
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {}
+    }
+  },
+
+  "_branches_README": [
+    "One entry per branch, plus the required N/A entry for users with no branch.",
+    "discord_guild_id       that branch's own Discord server",
+    "discord_roles_by_rank  { RANK_KEY: role_id } applied inside that branch server",
+    "main_aux_discord_role_ids  MAIN-SERVER-ONLY roles granted by belonging to this branch.",
+    "                       This is the branch half of the auxiliary mapping: it lives in the",
+    "                       MAIN server, not the branch server, so a member's branch is visible",
+    "                       in the one server everybody is in. Managed, so the old branch's",
+    "                       auxiliary roles come off automatically on a branch change.",
+    "                       Valid on N/A too, if unaffiliated members should carry a role."
+  ],
+  "branches": {
+    "N/A": {
+      "display": "N/A",
+      "is_na": true,
+      "discord_guild_id": null,
+      "discord_roles_by_rank": {},
+      "main_aux_discord_role_ids": []
+    },
+    "ECHELON": {
+      "display": "ECHELON",
+      "discord_guild_id": 1482547363082932417,
+      "discord_roles_by_rank": {
+        "_EXAMPLE_NORMAL_RANK": null
+      },
+      "main_aux_discord_role_ids": [1375155240596275270]
+    },
+    "INTELLIGENCE": {
+      "display": "INTELLIGENCE",
+      "discord_guild_id": 1478552893085716563,
+      "discord_roles_by_rank": {
+        "_EXAMPLE_NORMAL_RANK": null
+      },
+      "main_aux_discord_role_ids": [1372811213091766292]
+    }
+    
+  },
+
+  "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],
+
+  "_default_registration_rank_README": [
+    "Rank key given to a new record by /register — presumably Training Associate.",
+    "Left null on purpose: a new record gets a blank rank, which sorts to the bottom",
+    "of its section and synchronizes nothing, rather than a guessed starting rank."
+  ],
+  "default_registration_rank": null,
+
+  "discord": {
+    "_comment": "main_guild_id is the designated server where /register is used.",
+    "main_guild_id": 1246219094521548810,
+    "log_channel_id": 1377015313631019130,
+    "extra_managed_role_ids": [],
+    "member_edit_delay": 0.35
+  },
+
+  "roblox": {
+    "group_id": 34399374,
+    "api_base": "https://apis.roblox.com/cloud/v2",
+    "request_timeout": 15.0
+  },
+
+  "_registration_README": [
+    "How /register verifies a Roblox account.",
+    "  OAUTH : Roblox OAuth 2.0 (default). Asks the user directly — no third-party opt-in.",
+    "  ROVER : legacy Rover lookup. Requires each user to opt in to Rover's data sharing.",
+    "",
+    "OAUTH needs, in the environment: ROBLOX_OAUTH_CLIENT_ID, ROBLOX_OAUTH_CLIENT_SECRET",
+    "and, below, a redirect_uri matching one registered on the Roblox app.",
+    "NOTE: a new Roblox OAuth app starts in PRIVATE mode, capped at 10 unique users,",
+    "until Roblox approves it for public mode. Submit it for review before rollout."
+  ],
+  "registration": {
+    "verification_method": "OAUTH"
+  },
+
+  "roblox_oauth": {
+    "_comment": "Must exactly match a redirect URL registered on the Roblox OAuth app. Plain HTTPS (or http://localhost for local debugging), max 256 chars.",
+    "redirect_uri": "https://profound-marielle-lotusllcdevelopmentindustries-cde95bf0.koyeb.app/roblox/callback",
+    "scopes": ["openid", "profile"],
+    "_state_ttl_comment": "How long an unfinished verification link stays valid, in seconds.",
+    "state_ttl_seconds": 600,
+    "request_timeout": 15.0
+  },
+
+  "rover": {
+    "_comment": "Legacy fallback, only used when registration.verification_method is ROVER.",
+    "api_base": "https://registry.rover.link/api",
+    "request_timeout": 15.0
+  },
+
+  "_permissions_README": [
+    "NOTHING IS PERMITTED UNTIL IT IS LISTED HERE. Unconfigured permissions deny.",
+    "",
+    "CONDITIONS INSIDE ONE GRANT ARE ANDed:",
+    "allowed_relations   any of SELF, LOWER, EQUAL, HIGHER, UNRANKED — the relation of",
+    "                    the TARGET user to the ACTING user, compared by rank 'order'.",
+    "min_rank_order      optional floor on the acting user's rank order",
+    "allowed_categories  optional restriction on the acting user's CATEGORY",
+    "",
+    "So { allowed_relations: [SELF], allowed_categories: [HIGH-RANK] } means",
+    "'only a HIGH-RANK, and only on themselves' — NOT 'anyone on themselves'.",
+    "",
+    "GRANTS ARE ORed. To express 'anyone on themselves, OR a high rank on someone",
+    "below them', use two grants — the action is allowed if ANY of them matches:",
+    "",
+    "  \"SET_STATUS\": {",
+    "    \"grants\": [",
+    "      { \"allowed_relations\": [\"SELF\"] },",
+    "      { \"allowed_relations\": [\"LOWER\"], \"allowed_categories\": [\"HIGH-RANK\"] }",
+    "    ]",
+    "  }",
+    "",
+    "The first grant has no category condition, so ANY registered member passes it",
+    "for themselves. The second only passes for a HIGH-RANK acting on someone of",
+    "lower rank. Add \"EQUAL\" to the second grant's relations if high ranks should",
+    "also be able to act on each other.",
+    "",
+    "The flat shape (no \"grants\" key) is still accepted and means a single grant.",
+    "",
+    "bootstrap_discord_ids  bypasses all rank checks. Needed to configure the system",
+    "                    before anyone has a rank. Prune once real ranks exist.",
+    "",
+    "Rules with an empty allowed_relations are UNCONFIGURED and deny everyone —",
+    "that is deliberate, not an oversight. The real hierarchy has not been supplied,",
+    "and a guess here would silently grant real authority."
+  ],
+  "permissions": {
+    "default_decision": "DENY",
+    "bootstrap_discord_ids": [624559006072963082],
+    "rules": {
+      "REGISTER_SELF": {
+        "allowed_relations": ["SELF"],
+        "note": "Anyone unregistered may register themselves. Safe to enable now."
+      },
+      "VIEW_RECORD": {
+        "grants": [
+          { "allowed_relations": ["SELF"], "allowed_categories": ["HIGH-RANK"] },
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "decide who may view other users' records."
+      },
+      "SET_TIMEZONE": {
+        "_shape_note": "Two-grant example: anyone on themselves, OR a HIGH-RANK on someone below them.",
+        "allowed_relations": ["SELF"],
+        "note": "confirm whether high ranks should be able to set another user's timezone at all."
+      },
+      "SET_RANK": {
+        "min_rank_order": null,
+        "grants": [
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "high ranks only. Supply allowed_relations (likely LOWER) and a min_rank_order."
+      },
+      "SET_BRANCH": {
+        "min_rank_order": null,
+        "grants": [
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] },
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
+
+        ],
+        "note": "high ranks only. Same shape as SET_RANK."
+      },
+      "SET_STATUS": {
+        "grants": [
+          { "allowed_relations": ["SELF"] }
+        ],
+        "note": "users may set their own allowed status; high ranks may set lower-ranked users'. Fill the first grant with [\"SELF\"] and the second with [\"LOWER\"] to enable that."
+      },
+      "SET_LOA": {
+        "grants": [
+          { "allowed_relations": ["SELF"] },
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "pending the LOA data format definition. See roles/loa.py."
+      },
+      "FORCE_SYNC": {
+        "min_rank_order": 12,
+        "grants": [
+          { "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "who may force a re-synchronization."
+      },
+      "RESTRUCTURE_SHEET": {
+        "min_rank_order": 12,
+        "grants": [
+          { "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "who may trigger a full sheet re-layout."
+      },
+      "ADMIN_INSPECT": {
+        "min_rank_order": 11,
+        "grants": [
+          { "allowed_categories": ["HIGH-RANK"] }
+        ],
+        "note": "who may inspect sync queue / dead letters."
+      }
+    }
+  },
+
+  "sync": {
+    "poll_interval_seconds": 45,
+    "retry_backoff_seconds": [10, 30, 120, 600, 1800],
+    "max_attempts": 5,
+    "_enabled_comment": "Set false for a dry run: changes are computed and logged but not applied.",
+    "enabled": false,
+    "auto_restructure": true,
+
+    "_removal_README": [
+      "A record does not vanish from the sheet on its own. If it is deleted, the person",
+      "is no longer personnel: their managed Discord roles are stripped in the main server",
+      "AND every branch server, and re-entry requires /register again.",
+      "",
+      "Roblox is handled the same way, via unassignRole:",
+      "  UNASSIGN : unassign every managed role in every managed group (default)",
+      "  SET_ROLE : unassign the managed roles, then leave removal_roblox_role_id behind",
+      "             in the main group as a 'removed' marker",
+      "  IGNORE   : leave Roblox roles alone",
+      "Built-in roles (Owner/Member/Guest) are never touched, so a stripped member falls",
+      "back to plain Member rather than being removed from the group."
+    ],
+    "on_removal_strip_discord": true,
+    "on_removal_roblox": "UNASSIGN",
+    "removal_roblox_role_id": null,
+
+    "_manage_status_formatting_comment": "Installs conditional-format rules on column J. Off by default so it never clobbers hand-made rules.",
+    "manage_status_formatting": false
+  }
+}

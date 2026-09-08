@@ -116,11 +116,37 @@ def create_app():
     app.router.add_get("/channels", handle_channels)
     app.router.add_get("/say", handle_say)
     app.router.add_post("/say", handle_say)
+
+    # Roblox OAuth callback, if the role management system is present.
+    try:
+        from roles.oauth_routes import add_routes as add_roles_oauth_routes
+        add_roles_oauth_routes(app)
+    except ImportError:
+        pass
+
+    # Terms of Service and Privacy Policy — required by Roblox to publish an
+    # OAuth app, and served here so they share the app's HTTPS host.
+    try:
+        from legal_pages import add_routes as add_legal_routes
+        add_legal_routes(app)
+    except ImportError:
+        pass
+
     return app
 
 
-async def start_web_server(host="0.0.0.0", port=8000):
-    """Start the web server."""
+async def start_web_server(host="0.0.0.0", port=None):
+    """Start the web server.
+
+    Port comes from the PORT environment variable when set — hosts like Koyeb
+    and Railway assign it and route public traffic to it. Falls back to 8000.
+    """
+    if port is None:
+        try:
+            port = int(os.environ.get("PORT", "8000"))
+        except ValueError:
+            port = 8000
+
     app = create_app()
     runner = web.AppRunner(app)
     await runner.setup()
