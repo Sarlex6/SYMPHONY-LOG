@@ -327,7 +327,7 @@
     },
 
     "DEVELOPMENT_HEAD": {
-      "display": "DEVELOPMENT_HEAD",
+      "display": "DEVELOPMENT HEAD",
       "category": "HIGH-RANK",
       "order": 12,
       "special": true,

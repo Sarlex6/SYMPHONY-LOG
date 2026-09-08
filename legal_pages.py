@@ -26,7 +26,7 @@ ORGANIZATION = "L.O.T.U.S."
 #: How someone reaches a human. A Discord handle is fine; an email is better if
 #: you have one, because a data request may come from someone who has already
 #: left the server.
-CONTACT = "the #support channel in our Discord server, or a Discord staff member"
+CONTACT = 'the discord server staff or the service administrator "sarlex" directly'
 
 #: Update whenever the substance of these documents changes.
 LAST_UPDATED = "8 September 2026"
