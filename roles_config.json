@@ -39,7 +39,7 @@
   ],
   "ranks": {
     "APPLICANT": {
-      "display": "Applicant",
+      "display": "APPLICANT",
       "category": "LOW-RANK",
       "order": 0,
       "special": false,
@@ -57,7 +57,7 @@
     },
 
     "TRAINING_ASSOCIATE": {
-      "display": "Training Associate",
+      "display": "TRAINING ASSOCIATE",
       "category": "LOW-RANK",
       "order": 1,
       "special": false,
@@ -75,7 +75,7 @@
     },
 
     "JUNIOR_ASSOCIATE": {
-      "display": "Junior Associate",
+      "display": "JUNIOR ASSOCIATE",
       "category": "LOW-RANK",
       "order": 2,
       "special": false,
@@ -93,7 +93,7 @@
     },
 
     "ASSOCIATE": {
-      "display": "Associate",
+      "display": "ASSOCIATE",
       "category": "LOW-RANK",
       "order": 3,
       "special": false,
@@ -111,7 +111,7 @@
     },
 
     "SENIOR_ASSOCIATE": {
-      "display": "Senior Associate",
+      "display": "SENIOR ASSOCIATE",
       "category": "LOW-RANK",
       "order": 4,
       "special": false,
@@ -129,7 +129,7 @@
     },
 
     "SPECIALIST": {
-      "display": "Specialist",
+      "display": "SPECIALIST",
       "category": "LOW-RANK",
       "order": 5,
       "special": false,
@@ -147,7 +147,7 @@
     },
 
     "SENIOR_SPECIALIST": {
-      "display": "Senior Specialist",
+      "display": "SENIOR SPECIALIST",
       "category": "MID-RANK",
       "order": 6,
       "special": false,
@@ -165,7 +165,7 @@
     },
 
     "TEAM_LEADER": {
-      "display": "Team Leader",
+      "display": "TEAM LEADER",
       "category": "MID-RANK",
       "order": 7,
       "special": false,
@@ -183,7 +183,7 @@
     },
 
     "OPERATIONS_COORDINATOR": {
-      "display": "Operations Coordinator",
+      "display": "OPERATIONS COORDINATOR",
       "category": "MID-RANK",
       "order": 8,
       "special": false,
@@ -201,7 +201,7 @@
     },
 
     "OPERATIONS_MANAGER": {
-      "display": "Operations Manager",
+      "display": "OPERATIONS MANAGER",
       "category": "MID-RANK",
       "order": 9,
       "special": false,
@@ -219,7 +219,7 @@
     },
 
     "BRANCH_SUPERVISOR": {
-      "display": "Branch Supervisor",
+      "display": "BRANCH SUPERVISOR",
       "category": "HIGH-RANK",
       "order": 10,
       "special": false,
@@ -237,7 +237,7 @@
     },
 
     "BRANCH_MANAGER": {
-      "display": "Branch Manager",
+      "display": "BRANCH MANAGER",
       "category": "HIGH-RANK",
       "order": 11,
       "special": false,
@@ -255,7 +255,7 @@
     },
 
     "BRANCH_EXECUTIVE": {
-      "display": "Branch Executive",
+      "display": "BRANCH EXECUTIVE",
       "category": "HIGH-RANK",
       "order": 12,
       "special": false,
@@ -273,7 +273,7 @@
     },
 
     "BRANCH_HEAD": {
-      "display": "Branch Head",
+      "display": "BRANCH HEAD",
       "category": "HIGH-RANK",
       "order": 13,
       "special": false,
@@ -291,7 +291,7 @@
     },
 
     "EXECUTIVE_TEAM": {
-      "display": "Executive Team",
+      "display": "EXECUTIVE TEAM",
       "category": "HIGH-RANK",
       "order": 14,
       "special": false,
