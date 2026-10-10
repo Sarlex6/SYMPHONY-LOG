@@ -90,6 +90,8 @@ carried out for real:
 - Set a member's timezone
 - Set a member's rank
 - Set a member's branch
+- Give or revoke a grantable role (a modifier held on top of a rank — it is not
+  a rank and does not change one)
 - Set a member's activity status (ACTIVE, SEMI-ACTIVE, IN-ACTIVE)
 - Record or clear a leave of absence
 - Look up a member's record

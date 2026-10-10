@@ -52,6 +52,17 @@ ACTION_SPECS = {
         "args": {"branch": "branch name or key", "user": "Discord user ID (required)"},
         "self_only": False,
     },
+    "grant_role": {
+        "description": "Give a user a grantable role (a role modifier held on top of their rank). "
+                       "NOT a rank change — use set_rank for ranks.",
+        "args": {"role": "grantable role name or key", "user": "Discord user ID (required)"},
+        "self_only": False,
+    },
+    "revoke_role": {
+        "description": "Take a grantable role back from a user.",
+        "args": {"role": "grantable role name or key", "user": "Discord user ID (required)"},
+        "self_only": False,
+    },
     "set_status": {
         "description": "Set an activity status: ACTIVE, SEMI-ACTIVE or IN-ACTIVE.",
         "args": {"status": "ACTIVE|SEMI-ACTIVE|IN-ACTIVE", "user": "optional Discord user ID"},
@@ -139,6 +150,12 @@ def capability_briefing():
         parts.append("CONFIGURED SPECIAL RANKS:\n" + ", ".join(specials))
     if branches:
         parts.append("CONFIGURED BRANCHES:\n" + ", ".join(branches))
+    grantables = [g.display for g in cfg.grantable_roles.values()]
+    if grantables:
+        parts.append(
+            "CONFIGURED GRANTABLE ROLES (modifiers held on top of a rank, not ranks):\n"
+            + ", ".join(grantables)
+        )
 
     return "\n".join(parts)
 
@@ -159,6 +176,7 @@ _INTENT_HINTS = re.compile(
     r"register|registration|verify|verified|"
     r"rank|ranks|promote|promotion|promoted|demote|demotion|demoted|"
     r"branch|branches|transfer|transferred|reassign|assign|appoint|"
+    r"grant|grants|granted|grantable|revoke|revoked|permit|role|roles|"
     r"timezone|time ?zone|tz|"
     r"loa|leave of absence|on leave|going away|"
     r"status|active|inactive|semi.?active|"
@@ -174,7 +192,16 @@ def looks_like_management_request(text):
     """Whether a message is worth parsing as a management command."""
     if not text or len(text.strip()) < 3:
         return False
-    return bool(_INTENT_HINTS.search(text))
+    if _INTENT_HINTS.search(text):
+        return True
+    # A grantable role named outright ("give @x Event Host") is a request even
+    # when none of the generic words above appear.
+    lowered = text.casefold()
+    return any(
+        g.display.strip().casefold() in lowered
+        for g in roles_config.current().grantable_roles.values()
+        if g.display.strip()
+    )
 
 
 def _build_parser_prompt():
@@ -186,13 +213,18 @@ def _build_parser_prompt():
     cfg = roles_config.current()
     ranks = ", ".join(sorted(r.display for r in cfg.ranks.values())) or "(none configured yet)"
     branches = ", ".join(sorted(b.display for b in cfg.branches.values())) or "(none configured yet)"
+    grantables = ", ".join(sorted(g.display for g in cfg.grantable_roles.values())) or "(none configured yet)"
 
     return (
         "You translate a L.O.T.U.S. member's message into ONE role-management action.\n\n"
         "AVAILABLE ACTIONS:\n" + "\n".join(catalogue) + "\n\n"
         f"CONFIGURED RANKS: {ranks}\n"
-        f"CONFIGURED BRANCHES: {branches}\n\n"
+        f"CONFIGURED BRANCHES: {branches}\n"
+        f"CONFIGURED GRANTABLE ROLES: {grantables}\n\n"
         "RULES:\n"
+        "- A name from CONFIGURED GRANTABLE ROLES means grant_role / revoke_role. "
+        "  A name from CONFIGURED RANKS means set_rank. Never use one action for "
+        "  the other's names; if a name is in neither list, ask via 'clarification'.\n"
         "- Output JSON only, no prose, no markdown fences.\n"
         "- Never decide whether the user is permitted to do this. You do not "
         "  evaluate authority; the backend does. Just identify the request.\n"
@@ -380,6 +412,17 @@ async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
             return await service.set_branch(
                 context, str(value), target_id or actor_discord_id
             )
+
+        if action in ("grant_role", "revoke_role"):
+            value = args.get("role") or args.get("value")
+            if not value:
+                return ActionResult.invalid("No grantable role given.")
+            if resolved is None:
+                return ActionResult.invalid(
+                    "Mention the user whose grantable role should change."
+                )
+            method = service.grant_role if action == "grant_role" else service.revoke_role
+            return await method(context, str(value), target_id or actor_discord_id)
 
         if action == "set_status":
             value = args.get("status") or args.get("value")

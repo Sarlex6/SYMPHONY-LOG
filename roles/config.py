@@ -165,7 +165,7 @@ class BranchDef:
 #: Key used for the explicit "no branch" configuration entry.
 NA_BRANCH_KEY = "N/A"
 
-#: `GrantableRoleDef.guild` value meaning "the main server" rather than a branch.
+#: `GrantableRoleDef.guilds` entry meaning "the main server" rather than a branch.
 MAIN_GUILD_SCOPE = "MAIN"
 
 
@@ -188,11 +188,15 @@ class GrantableRoleDef:
     key: str
     display: str = ""
     description: str = ""
-    #: Which server this applies in: MAIN_GUILD_SCOPE or a branch key. A branch
-    #: scope means that branch's own server, and does not require the member to
-    #: belong to the branch.
-    guild: str = MAIN_GUILD_SCOPE
+    #: Which servers this applies in: each entry is MAIN_GUILD_SCOPE or a branch
+    #: key. A branch scope means that branch's own server, and does not require
+    #: the member to belong to the branch.
+    guilds: list = field(default_factory=lambda: [MAIN_GUILD_SCOPE])
     #: Roles added on top of what the rank and branch already give.
+    #:
+    #: With more than one server in `guilds`, both role lists may mix IDs from
+    #: all of them. Discord role IDs are globally unique, so each server simply
+    #: applies the ones that exist there — see DiscordSynchronizer._sync_guild.
     add_discord_role_ids: list = field(default_factory=list)
     #: Roles the rank or branch would otherwise give that this modifier cancels.
     #: Only ever subtracts from the foundational roles — a role the member holds
@@ -518,37 +522,67 @@ class RolesConfig:
                 return grantable
         return None
 
-    def grantable_guild_id(self, grantable):
-        """The server a grantable role applies in, or None if it is not
-        resolvable yet (unknown branch, or a server ID that is not supplied)."""
-        if grantable.guild == MAIN_GUILD_SCOPE:
+    def _scope_guild_id(self, scope):
+        if scope == MAIN_GUILD_SCOPE:
             return self.discord.main_guild_id
-        branch = self.branches.get(grantable.guild)
+        branch = self.branches.get(scope)
         return branch.discord_guild_id if branch else None
 
+    def grantable_guild_ids(self, grantable):
+        """The servers a grantable role applies in. Scopes that are not
+        resolvable yet (unknown branch, server ID not supplied) are left out,
+        so an empty list means the role cannot take effect anywhere."""
+        guild_ids = []
+        for scope in grantable.guilds:
+            guild_id = self._scope_guild_id(scope)
+            if guild_id and guild_id not in guild_ids:
+                guild_ids.append(guild_id)
+        return guild_ids
+
     def grantable_guild_label(self, grantable):
-        """'the main server' / 'the ECHELON server', for messages."""
-        if grantable.guild == MAIN_GUILD_SCOPE:
-            return "the main server"
-        branch = self.branches.get(grantable.guild)
-        return f"the {branch.display if branch else grantable.guild} server"
+        """'the main server' / 'the ECHELON and R&D servers', for messages."""
+        names = []
+        for scope in grantable.guilds:
+            if scope == MAIN_GUILD_SCOPE:
+                names.append("main")
+            else:
+                branch = self.branches.get(scope)
+                names.append(branch.display if branch else scope)
+        if len(names) == 1:
+            return f"the {names[0]} server"
+        return f"the {', '.join(names[:-1])} and {names[-1]} servers"
 
     def grant_adjustments(self, grant_keys, guild_id):
         """What a member's held grantable roles change in one server.
 
         Returns (added_ids, suppressed_ids). Keys that are not configured are
         ignored rather than guessed at, the same way an unknown rank is.
+
+        For a grantable role spanning several servers the IDs returned are the
+        whole mixed list; the ones belonging to other servers are filtered out
+        against the live server by the synchronizer.
         """
         added, suppressed = set(), set()
         for key in grant_keys or ():
             grantable = self.grantable(key)
             if grantable is None or not guild_id:
                 continue
-            if self.grantable_guild_id(grantable) != guild_id:
+            if guild_id not in self.grantable_guild_ids(grantable):
                 continue
             added.update(grantable.add_discord_role_ids)
             suppressed.update(grantable.remove_discord_role_ids)
         return added, suppressed
+
+    def shared_grant_role_ids(self, guild_id):
+        """Role IDs reaching this server through a grantable role that spans
+        several servers — the only IDs that may legitimately not exist here."""
+        shared = set()
+        for grantable in self.grantable_roles.values():
+            guild_ids = self.grantable_guild_ids(grantable)
+            if len(grantable.guilds) > 1 and guild_id in guild_ids:
+                shared.update(grantable.add_discord_role_ids)
+                shared.update(grantable.remove_discord_role_ids)
+        return shared
 
     # ── Discord server resolution ──
 
@@ -683,7 +717,7 @@ class RolesConfig:
 
         if guild_id:
             for grantable in self.grantable_roles.values():
-                if self.grantable_guild_id(grantable) == guild_id:
+                if guild_id in self.grantable_guild_ids(grantable):
                     managed.update(grantable.add_discord_role_ids)
 
         return managed
@@ -843,13 +877,25 @@ def _build_grantable(key, raw, branches):
               f"letter and may only contain letters, digits, spaces and _ & . / -")
         return None
 
-    guild = str(raw.get("guild") or MAIN_GUILD_SCOPE).strip().upper()
-    if guild != MAIN_GUILD_SCOPE:
-        branch = branches.get(guild)
+    # "guild" takes one scope or a list of them; "guilds" is accepted as well.
+    scopes = raw.get("guild") or raw.get("guilds") or MAIN_GUILD_SCOPE
+    if not isinstance(scopes, (list, tuple)):
+        scopes = [scopes]
+    guilds = []
+    for scope in scopes:
+        scope = str(scope).strip().upper()
+        if scope and scope not in guilds:
+            guilds.append(scope)
+    guilds = guilds or [MAIN_GUILD_SCOPE]
+
+    for scope in guilds:
+        if scope == MAIN_GUILD_SCOPE:
+            continue
+        branch = branches.get(scope)
         if branch is None or branch.is_na:
-            print(f"[Roles] Grantable role {key}: guild {guild!r} is neither "
-                  f"{MAIN_GUILD_SCOPE} nor a configured branch. It stays inert "
-                  f"until that is fixed.")
+            print(f"[Roles] Grantable role {key}: guild {scope!r} is neither "
+                  f"{MAIN_GUILD_SCOPE} nor a configured branch. It has no effect "
+                  f"there until that is fixed.")
 
     added = _int_list(raw.get("add_discord_role_ids"))
     removed = _int_list(raw.get("remove_discord_role_ids"))
@@ -862,7 +908,7 @@ def _build_grantable(key, raw, branches):
         key=key,
         display=raw.get("display", key),
         description=raw.get("description", ""),
-        guild=guild,
+        guilds=guilds,
         add_discord_role_ids=added,
         remove_discord_role_ids=removed,
         extra=raw.get("extra", {}) or {},

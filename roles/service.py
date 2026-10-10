@@ -391,6 +391,17 @@ class RoleManagerService:
                 f"`{rank_input}` is not a configured rank. Available: {available}."
             )
 
+        # Being allowed to re-rank this member is not being allowed to give them
+        # any rank: the actor's own rank is the ceiling on what they hand out.
+        ceiling = permissions.check_assignable_rank(
+            self.actor_record(context), rank, cfg,
+            actor_discord_id=context.actor_discord_id,
+        )
+        if not ceiling.allowed:
+            print(f"{context.log_prefix()} AUTHZ DENY {Permission.SET_RANK} "
+                  f"actor={context.actor_discord_id} rank={rank.key} :: {ceiling.reason}")
+            return ActionResult.denied(ceiling.reason, permission=Permission.SET_RANK)
+
         if target.rank_key == rank.key:
             return ActionResult.invalid(
                 f"{target.label()} already holds **{rank.display}**."
@@ -499,10 +510,11 @@ class RoleManagerService:
         if give:
             if key in target.grants:
                 return ActionResult.invalid(f"{name} already holds **{display}**.")
-            if not cfg.grantable_guild_id(grantable):
+            if not cfg.grantable_guild_ids(grantable):
                 return ActionResult.invalid(
                     f"**{display}** cannot be granted yet: its guild "
-                    f"`{grantable.guild}` does not resolve to a configured server."
+                    f"`{', '.join(grantable.guilds)}` does not resolve to a "
+                    f"configured server."
                 )
         elif key not in target.grants:
             return ActionResult.invalid(f"{name} does not hold **{display}**.")

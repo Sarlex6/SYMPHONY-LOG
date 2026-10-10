@@ -116,6 +116,12 @@ each is a one-line change if you want it different.
 4. **Permissions fail closed.** Any permission without a configured rule is
    denied, and the denial says which rule is missing.
 
+   **`SET_RANK` has a ceiling.** The rule decides *whose* rank an actor may
+   change; `permissions.check_assignable_rank()` separately decides *what* they
+   may change it to: any rank up to and including their own, never a senior one.
+   Compared by `order`, special ranks included. Bootstrap administrators are
+   exempt, since they have to seed the first ranks.
+
 5. **Rank is authoritative over category.** Column C is a rendering of the rank's
    configured category, so a rank change relocates the person automatically.
 
@@ -183,11 +189,18 @@ permission system. It only adjusts Discord roles, in exactly one server.
 
 | Field | Meaning |
 |---|---|
-| `guild` | `"MAIN"`, or a branch key for that branch's own server. A branch scope does not require the member to belong to that branch. |
+| `guild` | `"MAIN"`, a branch key for that branch's own server, or a list of them (`["MAIN", "ECHELON"]`). A branch scope does not require the member to belong to that branch. |
 | `add_discord_role_ids` | Granted on top of the rank's roles. Managed, so they come off on revocation. |
 | `remove_discord_role_ids` | Roles the rank or branch would otherwise give there, which this cancels. |
 
-- **Commands:** `/grant add user role` and `/grant remove user role`.
+- **Several servers, one mixed list.** When `guild` is a list, both role lists
+  may mix IDs from all of those servers. Discord role IDs are unique across
+  Discord, so each server applies the IDs that exist in it and ignores the rest —
+  there is nothing to label per server. `validate_configuration()` reports an ID
+  that exists in none of the role's servers.
+- **Commands:** `/grant add user role` and `/grant remove user role`. Angela
+  takes the same requests (`grant_role` / `revoke_role`), through the same
+  service methods and the same `SET_RANK` check.
 - **Authority:** whoever may use `SET_RANK` on the member. There is no separate
   permission to configure.
 - **Storage:** the keys a member holds live in technical column Y of their own

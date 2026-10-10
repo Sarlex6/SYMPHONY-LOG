@@ -232,6 +232,17 @@ class DiscordSynchronizer:
         else:
             desired, managed = self.desired_roles(record, guild_id, cfg)
 
+        # A grantable role spanning several servers lists the role IDs of all of
+        # them together. Role IDs are unique across Discord, so the ones that do
+        # not exist here belong to another of its servers and are not this
+        # server's business — drop them instead of reporting them as missing.
+        elsewhere = {
+            role_id for role_id in cfg.shared_grant_role_ids(guild_id)
+            if guild.get_role(role_id) is None
+        }
+        desired -= elsewhere
+        managed -= elsewhere
+
         if not managed:
             return SyncOutcome(
                 target, True,
@@ -379,33 +390,42 @@ class DiscordSynchronizer:
                         )
 
         for grantable in cfg.grantable_roles.values():
-            guild_id = cfg.grantable_guild_id(grantable)
-            if not guild_id:
+            guild_ids = cfg.grantable_guild_ids(grantable)
+            if len(guild_ids) < len(grantable.guilds):
                 problems.append(
-                    f"Grantable role {grantable.key}: guild '{grantable.guild}' "
-                    f"does not resolve to a configured server."
+                    f"Grantable role {grantable.key}: not every guild in "
+                    f"{grantable.guilds} resolves to a configured server."
                 )
+
+            guilds = []
+            for guild_id in guild_ids:
+                guild = self.client.get_guild(guild_id)
+                if guild is None:
+                    problems.append(
+                        f"Grantable role {grantable.key}: bot is not in guild {guild_id}."
+                    )
+                else:
+                    guilds.append(guild)
+            if not guilds:
                 continue
-            guild = self.client.get_guild(guild_id)
-            if guild is None:
-                problems.append(
-                    f"Grantable role {grantable.key}: bot is not in guild {guild_id}."
-                )
-                continue
+
+            # Each role has to exist in at least one of the role's servers; with
+            # several servers it is expected to be absent from the others.
+            where = ", ".join(g.name for g in guilds)
             for role_id in grantable.add_discord_role_ids + grantable.remove_discord_role_ids:
-                if guild.get_role(role_id) is None:
+                if not any(g.get_role(role_id) for g in guilds):
                     problems.append(
                         f"Grantable role {grantable.key}: role {role_id} not found "
-                        f"in {guild.name}."
+                        f"in {where}."
                     )
             # A cancelled role only has an effect if a rank or branch grants it.
-            foundation = cfg.managed_role_ids(guild_id)
             for role_id in grantable.remove_discord_role_ids:
-                if role_id not in foundation:
+                owners = [g for g in guilds if g.get_role(role_id)]
+                if owners and not any(role_id in cfg.managed_role_ids(g.id) for g in owners):
                     problems.append(
                         f"Grantable role {grantable.key}: removes role {role_id}, "
-                        f"which no rank or branch grants in {guild.name} — it has "
-                        f"no effect."
+                        f"which no rank or branch grants in {owners[0].name} — it "
+                        f"has no effect."
                     )
 
         return problems

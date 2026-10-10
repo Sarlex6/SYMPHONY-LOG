@@ -151,6 +151,46 @@ def check(permission, actor_record, target_record=None, cfg=None, actor_discord_
     )
 
 
+def check_assignable_rank(actor_record, rank, cfg=None, actor_discord_id=None):
+    """Decide whether the actor may hand out `rank` at all.
+
+    `check(SET_RANK, ...)` only looks at who the target is NOW. On its own that
+    lets anyone who may re-rank a junior member lift them to any rank in the
+    configuration, including above themselves. This is the other half: nobody
+    assigns a rank senior to their own. Their own rank is the ceiling, and it is
+    included — a rank can be handed to a peer-to-be, never to a superior-to-be.
+
+    Bootstrap administrators are exempt for the same reason they are exempt from
+    check(): they have to be able to seed the first ranks.
+    """
+    cfg = cfg or roles_config.current()
+
+    effective_id = actor_discord_id or (actor_record.discord_id if actor_record else None)
+    if effective_id and effective_id in cfg.permissions.bootstrap_discord_ids:
+        return PermissionDecision.allow(
+            Permission.SET_RANK, reason="Bootstrap administrator."
+        )
+
+    actor_order = rank_order(actor_record, cfg)
+    if actor_order is None:
+        return PermissionDecision.deny(
+            Permission.SET_RANK,
+            "Your own rank cannot be resolved, so you cannot assign ranks.",
+            Relation.UNRANKED,
+        )
+
+    if rank.order > actor_order:
+        own = cfg.rank(actor_record.rank_key)
+        return PermissionDecision.deny(
+            Permission.SET_RANK,
+            f"You cannot assign **{rank.display}**: it is senior to your own rank "
+            f"({own.display if own else actor_record.rank_key}). You can assign "
+            f"ranks up to and including your own.",
+        )
+
+    return PermissionDecision.allow(Permission.SET_RANK)
+
+
 def _grant_matches(grant, actor_record, relation, cfg):
     """Whether one grant's conditions all hold. Conditions within a grant are ANDed."""
     if relation not in grant.allowed_relations:

@@ -350,9 +350,162 @@
         "CONTINGENCY": 642287025,
         "R&D": 698407091
       }
-    }
+    },
 
+    "GAME_MODERATOR": {
+      "display": "GAME MODERATOR",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1382198106711523401,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "FACTION_COMMITTEE": {
+      "display": "FACTION COMMITTEE",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1381916679952662559,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "LORE_TEAM": {
+      "display": "LORE TEAM",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1455563079193727007,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "PROJECT_STAFF_DIRECTORATE": {
+      "display": "PROJECT STAFF DIRECTORATE",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1541663991670243429,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "POI_ADMINISTRATOR": {
+      "display": "P.O.I. ADMINISTRATOR",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1437071515987214388,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "EXTERNAL": {
+      "display": "EXTERNAL",
+      "category": "MID-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1382198671332085902,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "GUESTS_&_FOREIGN_AFFAIRS": {
+      "display": "GUESTS & FOREIGN AFFAIRS",
+      "category": "LOW-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1489882807961653279,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    },
+
+    "FACTION_REPRESENTATIVE": {
+      "display": "FACTION REPRESENTATIVE",
+      "category": "LOW-RANK",
+      "order": 0,
+      "special": true,
+      "special_group_order": 2,
+      "main_discord_role_id": 1374134279545688255,
+      "main_aux_discord_role_ids": [],
+      "syncs_roblox": false,
+      "roblox_roles_by_branch": {
+        "N/A": null,
+        "ECHELON": null,
+        "INTELLIGENCE": null,
+        "MEDICAL": null,
+        "CONTINGENCY": null,
+        "R&D": null
+      }
+    }
   
+    
+
   },
 
   "_branches_README": [
@@ -505,6 +658,12 @@
     "  }"
   ],
   "grantable_roles": {
+    "LOTUS_BRANCH_COMMAND" : {
+      "display": "LOTUS BRANCH COMMAND",
+      "guild" : ["R&D", "CONTINGENCY", "INTELLIGENCE", "ECHELON"],
+      "add_discord_role_ids": [1482547363514945619, 1491869649611133069, 1483100986032652358, 1482579828677939354],
+      "remove_discord_role_ids": []
+    }
   },
 
   "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],
