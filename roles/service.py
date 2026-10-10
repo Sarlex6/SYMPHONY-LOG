@@ -32,6 +32,7 @@ from roles.models import (
     SyncStatus,
     UserRecord,
     format_entry_date,
+    format_identification,
     new_record_uid,
 )
 from roles.repository import PersonnelRepository
@@ -303,7 +304,9 @@ class RoleManagerService:
             record_uid=new_record_uid(),
             discord_id=context.actor_discord_id,
             roblox_id=roblox_id,
-            discord_username=discord_username,
+            # Column D: "RobloxName (discordname)".
+            username=format_identification(roblox_username, discord_username)
+                     or str(roblox_id),
             # Column K is set once, here, and never touched again.
             entry_date=format_entry_date(),
             status=Status.ACTIVE,
@@ -418,7 +421,7 @@ class RoleManagerService:
         placement = layout.describe_placement(saved, self.repository.live_records(), cfg)
 
         return ActionResult.success(
-            f"{saved.discord_username or saved.discord_id} is now **{rank.display}** "
+            f"{saved.username or saved.discord_id} is now **{rank.display}** "
             f"({placement}). Discord and Roblox synchronization queued.",
             record=saved,
             queued_targets=["DISCORD", "ROBLOX"] if job else [],
@@ -454,7 +457,7 @@ class RoleManagerService:
         job = self.sync_queue.enqueue(saved, reason="branch change")
 
         return ActionResult.success(
-            f"{saved.discord_username or saved.discord_id} moved to branch "
+            f"{saved.username or saved.discord_id} moved to branch "
             f"**{branch.display}**. Discord and Roblox synchronization queued.",
             record=saved,
             queued_targets=["DISCORD", "ROBLOX"] if job else [],
@@ -505,7 +508,7 @@ class RoleManagerService:
         else:
             key, display = grantable.key, grantable.display
 
-        name = target.discord_username or target.discord_id
+        name = target.username or target.discord_id
 
         if give:
             if key in target.grants:
@@ -683,7 +686,7 @@ class RoleManagerService:
         # Say what would be destroyed rather than destroying it unasked.
         if incomplete and not purge_incomplete:
             preview = ", ".join(
-                (r.discord_username or f"row {r.row}") for r in incomplete[:10]
+                (r.username or f"row {r.row}") for r in incomplete[:10]
             )
             more = f" (+{len(incomplete) - 10} more)" if len(incomplete) > 10 else ""
             return ActionResult.invalid(
@@ -705,7 +708,7 @@ class RoleManagerService:
             return ActionResult.error(f"Restructure failed: {exc}")
 
         if purged:
-            names = ", ".join((r.discord_username or f"row {r.row}") for r in purged[:15])
+            names = ", ".join((r.username or f"row {r.row}") for r in purged[:15])
             more = f" (+{len(purged) - 15} more)" if len(purged) > 15 else ""
             return ActionResult.success(
                 f"Purged **{len(purged)}** incomplete row(s) and restructured the "
@@ -829,7 +832,7 @@ class RoleManagerService:
                 merged = current.with_changes(**{
                     field: getattr(record, field)
                     for field in ("rank_key", "branch_key", "timezone", "status",
-                                  "loa_raw", "discord_username", "category")
+                                  "loa_raw", "username", "category")
                     if getattr(record, field) != getattr(current, field)
                 })
 
@@ -845,7 +848,7 @@ class RoleManagerService:
         category = layout.effective_category(record, cfg)
 
         lines = [
-            f"**{record.discord_username or record.discord_id}**",
+            f"**{record.username or record.discord_id}**",
             f"Rank: {rank.display if rank else (record.rank_key or 'unset')}",
             f"Branch: {branch.display if branch else (record.branch_key or 'N/A')}",
             f"Category: {category.value if category else 'unassigned'}",

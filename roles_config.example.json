@@ -569,6 +569,9 @@
     "removal_roblox_role_id": null,
 
     "_manage_status_formatting_comment": "Installs conditional-format rules on column J. Off by default so it never clobbers hand-made rules.",
-    "manage_status_formatting": false
+    "manage_status_formatting": false,
+
+    "_username_refresh_minutes_comment": "Column D reads 'RobloxName (discordname)'. How often the DISCORD half is re-checked, in minutes (1440 = once a day); the first pass runs right after startup. The Roblox half is not refreshed. 0 turns the pass off.",
+    "username_refresh_minutes": 1440
   }
 }

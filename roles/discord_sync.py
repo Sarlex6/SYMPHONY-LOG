@@ -313,6 +313,31 @@ class DiscordSynchronizer:
                 resolved.append(role)
         return resolved, missing
 
+    async def fetch_usernames(self, discord_ids):
+        """{discord_id: account username} for the given users.
+
+        The account username (@handle), not a display name or server nickname:
+        it is the one name that is the same in every server. Display data only.
+        A user who cannot be looked up is simply absent from the result, so a
+        failed lookup can never blank a name that is already on the sheet.
+        """
+        names = {}
+        if not self.is_ready():
+            return names
+
+        for discord_id in discord_ids:
+            user = self.client.get_user(discord_id)
+            if user is None:
+                # Not in the cache: someone who shares no server with the bot
+                # any more. Rare, so the extra API call is affordable.
+                try:
+                    user = await self.client.fetch_user(discord_id)
+                except discord.HTTPException:
+                    continue
+            if user is not None and user.name:
+                names[discord_id] = user.name
+        return names
+
     # ── Diagnostics ──
 
     async def validate_configuration(self, cfg=None):

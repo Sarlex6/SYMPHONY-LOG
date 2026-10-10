@@ -230,14 +230,27 @@ def describe_placement(record, records, cfg):
 # ── Integrity checks ─────────────────────────────────────────────────────────
 
 def find_misplaced(records, cfg):
-    """Records sitting in the wrong category section, for diagnostics."""
+    """Records sitting in the wrong category section, for diagnostics.
+
+    Judged by POSITION, not by the record's own column C. The category column is
+    merged per section and only the top row of a block carries the label, so
+    every other row reads back with no category at all — comparing against it
+    could only ever notice a misplaced record that happened to sit at the top of
+    its section.
+
+    Section sizes follow from how many records belong in each, so the n-th
+    occupied row belongs to whichever section the n-th record of the correct
+    ordering falls in. Returns [(record, section_it_sits_in, section_it_belongs_in)].
+    """
+    live = sorted((r for r in records if not r.is_empty_row()), key=lambda r: r.row)
+    ordered = order_records(live, cfg)
+
     misplaced = []
-    for record in records:
-        if record.is_empty_row():
-            continue
+    for record, slot in zip(live, ordered):
+        found = effective_category(slot, cfg)
         expected = effective_category(record, cfg)
-        if expected and record.category and expected is not record.category:
-            misplaced.append((record, record.category, expected))
+        if expected and expected is not found:
+            misplaced.append((record, found, expected))
     return misplaced
 
 

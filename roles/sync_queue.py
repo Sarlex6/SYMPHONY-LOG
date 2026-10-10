@@ -75,7 +75,7 @@ class SyncJob:
                 "record_uid": self.snapshot.record_uid,
                 "discord_id": self.snapshot.discord_id,
                 "roblox_id": self.snapshot.roblox_id,
-                "discord_username": self.snapshot.discord_username,
+                "username": self.snapshot.username,
                 "rank_key": self.snapshot.rank_key,
                 "branch_key": self.snapshot.branch_key,
             }
@@ -91,7 +91,8 @@ class SyncJob:
                 record_uid=raw.get("record_uid", ""),
                 discord_id=int(raw.get("discord_id") or 0),
                 roblox_id=int(raw.get("roblox_id") or 0),
-                discord_username=raw.get("discord_username", ""),
+                # "discord_username" is the key older persisted jobs used.
+                username=raw.get("username") or raw.get("discord_username", ""),
                 rank_key=raw.get("rank_key", ""),
                 branch_key=raw.get("branch_key", ""),
             )

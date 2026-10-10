@@ -14,12 +14,13 @@ so one bad cycle can never kill the loop.
 """
 
 import asyncio
+import time
 from datetime import datetime
 
 from roles import columns
 from roles import config as roles_config
 from roles import layout
-from roles.models import ChangeSource
+from roles.models import ChangeSource, format_identification, split_identification
 from roles.repository import RecordChange
 
 
@@ -39,6 +40,18 @@ class SheetPoller:
         #: than applied on top of newer state.
         self._generation = 0
         self._stats = {"cycles": 0, "changes": 0, "queued": 0, "errors": 0, "removals": 0}
+
+        #: The layout a restructure was last asked to fix, and whether that
+        #: attempt ran to completion. See _maybe_restructure.
+        self._restructure_signature = None
+        self._restructure_completed = False
+        self._restructure_warned = False
+
+        #: Column D texts worked out in the background, by record UID, waiting
+        #: to be written at the next poll. See _start_username_lookup.
+        self._pending_usernames = None
+        self._username_task = None
+        self._username_lookup_at = None
 
     # ── Loop ──
 
@@ -86,11 +99,20 @@ class SheetPoller:
         async with self.service.gateway.write_lock:
             changes = await self.repository.refresh_and_diff()
             self._generation = self.repository.generation
+            # The snapshot is fresh and the lock is held: the one moment a
+            # looked-up name can be written to a row number known to be current.
+            await self._apply_usernames()
 
         self._last_poll_at = datetime.utcnow()
+        self._start_username_lookup(cfg)
 
         if not changes:
             await self._maybe_resync_drift(cfg)
+            # Checked on quiet cycles too. A layout that is wrong stays wrong
+            # until something fixes it, and waiting for an unrelated edit to
+            # come along and trigger the check is not a repair strategy.
+            if cfg.sync.auto_restructure:
+                await self._maybe_restructure(cfg)
             return []
 
         self._stats["changes"] += len(changes)
@@ -150,24 +172,50 @@ class SheetPoller:
             print(f"[Roles:Poll] Re-queued {queued} record(s) with unsynchronized state.")
 
     async def _maybe_restructure(self, cfg):
-        """Re-lay-out the sheet when records are in the wrong section.
+        """Re-lay-out the sheet when records are not where they belong.
 
         A manual rank edit puts someone in the right rank but the wrong place;
-        this is what moves them into their category section.
+        this is what moves them into their category section, and into the right
+        position within it.
+
+        "Where they belong" is decided by planning the layout and seeing whether
+        anyone would move — the same computation the repository then executes,
+        so the check and the fix cannot disagree. It does not read column C:
+        that column is merged per section, so most rows carry no category value
+        to compare against.
         """
         records = self.repository.live_records()
-        misplaced = layout.find_misplaced(records, cfg)
+        plan = layout.plan_layout(records, cfg, self.repository.footer_row)
         # Every EMPTY row beyond the configured slack is one the sheet should
         # have been resized around.
         surplus = max(0, len(layout.find_empty_rows(self.repository.all_records()))
                          - columns.SLACK_ROWS)
 
-        if not misplaced and not surplus:
+        if not plan.moves and not surplus:
+            self._restructure_signature = None
             return
 
+        # This now runs every cycle, so it must not be able to rewrite the sheet
+        # every cycle. If a restructure already ran to completion for exactly
+        # this layout and the sheet still reads the same, another pass will not
+        # change the outcome — say so once and leave it for a human.
+        signature = (
+            tuple((r.record_uid or f"row{r.row}", r.row, target) for r, target in plan.moves),
+            surplus,
+        )
+        if signature == self._restructure_signature and self._restructure_completed:
+            if not self._restructure_warned:
+                self._restructure_warned = True
+                print("[Roles:Poll] Restructure did not settle the layout; not "
+                      "repeating it. Run /aria restructure after checking the sheet.")
+            return
+        self._restructure_signature = signature
+        self._restructure_completed = False
+        self._restructure_warned = False
+
         reasons = []
-        if misplaced:
-            reasons.append(f"{len(misplaced)} misplaced record(s)")
+        if plan.moves:
+            reasons.append(f"{len(plan.moves)} record(s) out of place")
         if surplus:
             reasons.append(f"{surplus} EMPTY row(s)")
         print(f"[Roles:Poll] Restructuring: {', '.join(reasons)}.")
@@ -177,8 +225,128 @@ class SheetPoller:
                 # Never purges: automatic deletion of rows is not something a
                 # background loop should decide. Only the explicit command does.
                 await self.repository.restructure(purge_incomplete=False)
+            self._restructure_completed = True
         except Exception as exc:
+            # Left as not-completed, so the next cycle tries again.
             print(f"[Roles:Poll] Restructure failed: {type(exc).__name__}: {exc}")
+
+    # ── Usernames (column D) ──
+
+    def _start_username_lookup(self, cfg):
+        """Kick off the background username pass when one is due.
+
+        Two steps on purpose. The pass can involve API calls, so it runs as its
+        own task and never holds up a poll or the sheet lock. Its result is only *written* by _apply_usernames, at the
+        start of a later poll, where the snapshot is known to be current.
+        """
+        minutes = cfg.sync.username_refresh_minutes
+        if not minutes or minutes <= 0:
+            return
+        if self._username_task is not None and not self._username_task.done():
+            return
+
+        now = time.monotonic()
+        if self._username_lookup_at is not None and now - self._username_lookup_at < minutes * 60:
+            return
+
+        self._username_lookup_at = now
+        self._username_task = asyncio.get_event_loop().create_task(
+            self._lookup_usernames(cfg)
+        )
+
+    async def _lookup_usernames(self, cfg):
+        """Work out what column D should read for every record.
+
+        Column D is "RobloxName (discordname)". The two halves are treated
+        differently, because they change at very different rates:
+
+          * The Discord half is re-read from Discord on every pass. Reading it
+            is nearly free — the names are already in the bot's member cache.
+
+          * The Roblox half is left alone. It is only looked up for rows that
+            are not in the combined format yet (written before it existed, or
+            typed by hand), which need it once to be converted. After that the
+            row never costs a Roblox call again.
+        """
+        from roles.discord_sync import synchronizer as discord_synchronizer
+        from roles.roblox_sync import synchronizer as roblox_synchronizer
+
+        if not discord_synchronizer.is_ready():
+            self._retry_username_lookup_soon(cfg)
+            return
+
+        records = [r for r in self.repository.live_records()
+                   if not r.is_incomplete() and r.discord_id]
+        if not records:
+            return
+
+        try:
+            discord_names = await discord_synchronizer.fetch_usernames(
+                [r.discord_id for r in records]
+            )
+        except Exception as exc:
+            print(f"[Roles:Poll] Discord username lookup failed: {type(exc).__name__}: {exc}")
+            discord_names = {}
+
+        unconverted = [r for r in records if not split_identification(r.username)[1]]
+        roblox_names = {}
+        if unconverted:
+            try:
+                roblox_names = await roblox_synchronizer.fetch_usernames(
+                    sorted({r.roblox_id for r in unconverted if r.roblox_id}), cfg
+                )
+            except Exception as exc:
+                print(f"[Roles:Poll] Roblox username lookup failed: {type(exc).__name__}: {exc}")
+
+        texts, waiting = {}, 0
+        for record in records:
+            roblox_name, discord_name = split_identification(record.username)
+
+            if not discord_name:
+                # Old single-name row. What it holds could be either username,
+                # so it is only rewritten once Roblox has said which is which.
+                roblox_name = roblox_names.get(record.roblox_id)
+                if not roblox_name:
+                    waiting += 1
+                    continue
+
+            text = format_identification(
+                roblox_name, discord_names.get(record.discord_id) or discord_name
+            )
+            if text and text != record.username:
+                texts[record.record_uid] = text
+
+        if texts:
+            self._pending_usernames = texts
+        if waiting:
+            # Rows still to convert should not sit for a whole day because one
+            # Roblox call failed.
+            print(f"[Roles:Poll] {waiting} row(s) still need a Roblox username to be "
+                  f"converted to the combined format; retrying shortly.")
+            self._retry_username_lookup_soon(cfg)
+
+    def _retry_username_lookup_soon(self, cfg, seconds=600):
+        """Make the next pass due in ten minutes instead of a full interval."""
+        interval = cfg.sync.username_refresh_minutes * 60
+        self._username_lookup_at = time.monotonic() - max(0, interval - seconds)
+
+    async def _apply_usernames(self):
+        """Write looked-up usernames. Caller holds the write lock, post-refresh."""
+        names, self._pending_usernames = self._pending_usernames, None
+        if not names:
+            return
+
+        try:
+            changed = await self.repository.update_usernames(names)
+        except Exception as exc:
+            print(f"[Roles:Poll] Could not write usernames: {type(exc).__name__}: {exc}")
+            return
+
+        if changed:
+            preview = ", ".join(f"{old or '(blank)'} -> {new}" for old, new in changed[:10])
+            more = f" (+{len(changed) - 10} more)" if len(changed) > 10 else ""
+            print(f"[Roles:Poll] Column D updated for {len(changed)} record(s): "
+                  f"{preview}{more}.")
 
     @staticmethod
     def _looks_system_originated(change):
@@ -193,7 +361,7 @@ class SheetPoller:
             return False
         if change.record.revision <= change.previous.revision:
             return False
-        human_fields = {"category", "discord_username", "timezone", "rank_key",
+        human_fields = {"category", "username", "timezone", "rank_key",
                         "branch_key", "status", "entry_date"}
         return not (human_fields & set(change.fields))
 

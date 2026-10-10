@@ -79,7 +79,7 @@ def row_to_record(row, row_number, cfg=None):
     return UserRecord(
         row=row_number,
         category=Category.parse(_cell(row, columns.COL_CATEGORY)),
-        discord_username=_cell(row, columns.COL_IDENTIFICATION),
+        username=_cell(row, columns.COL_IDENTIFICATION),
         timezone=_cell(row, columns.COL_TIMEZONE),
         rank_key=_resolve_rank_key(_cell(row, columns.COL_RANK), cfg),
         branch_key=_resolve_branch_key(_cell(row, columns.COL_BRANCH), cfg),
@@ -126,7 +126,7 @@ def record_to_cells(record, row_number, cfg, include_notes=None, write_category=
         # Only the top row of a category block carries the label; the rest are
         # blanked so the merged cell shows it once. See normalize_managed_merges.
         columns.COL_CATEGORY: (category.value if category else "") if write_category else "",
-        columns.COL_IDENTIFICATION: record.discord_username,
+        columns.COL_IDENTIFICATION: record.username,
         columns.COL_TIMEZONE: record.timezone,
         columns.COL_RANK: rank_display,
         columns.COL_BRANCH: branch_display,
@@ -202,7 +202,7 @@ class RecordChange:
 #: Fields compared when detecting a manual edit. Excludes technical bookkeeping
 #: so the system's own writes do not read back as user changes.
 _COMPARED_FIELDS = (
-    "category", "discord_username", "timezone", "rank_key", "branch_key",
+    "category", "username", "timezone", "rank_key", "branch_key",
     "status", "entry_date", "discord_id", "roblox_id", "loa_raw", "grants",
 )
 
@@ -410,7 +410,7 @@ class PersonnelRepository:
             records = [r for r in records if not r.is_incomplete()]
             for record in purged:
                 print(f"[Roles] Purging incomplete row {record.row}: "
-                      f"{record.discord_username or '(no name)'} "
+                      f"{record.username or '(no name)'} "
                       f"({record.rank_key or 'no rank'})")
 
         plan = await self._apply_layout(records, cfg)
@@ -539,6 +539,49 @@ class PersonnelRepository:
             print(f"[Roles] {updated.label()} sync -> {sync_status.value}: {targets_note}")
 
         return updated
+
+    async def update_usernames(self, text_by_uid):
+        """Rewrite column D for records whose identification text has changed.
+
+        Touches column D only and moves nobody: the name is not part of the
+        sort order. Deliberately not a revision bump either — a display name is
+        not a change to the record, so it must not make queued sync jobs stale.
+
+        Returns [(old, new)] for the names that changed.
+
+        Caller must hold `gateway.write_lock` AND have refreshed the snapshot
+        under that same hold. Row numbers come straight from the snapshot, so a
+        stale one would write a name onto the wrong person. It does not reload
+        by itself on purpose: a reload outside the poller's diff would swallow
+        whatever changed on the sheet since the last poll, a removed row
+        included, and that removal would then never be acted on.
+        """
+        cells, changed, updated = [], [], {}
+        for record in self.live_records():
+            if record.is_incomplete():
+                continue
+            name = (text_by_uid.get(record.record_uid) or "").strip()
+            if not name or name == record.username:
+                continue
+            cells.append(gspread.Cell(
+                row=record.row, col=columns.COL_IDENTIFICATION, value=name,
+            ))
+            changed.append((record.username, name))
+            updated[record.record_uid] = record.with_changes(username=name)
+
+        if not cells:
+            return []
+
+        await self.gateway.write_cells(cells)
+
+        self._records = [updated.get(r.record_uid, r) if r.record_uid else r
+                         for r in self._records]
+        for record in updated.values():
+            self._by_uid[record.record_uid] = record
+            if record.discord_id:
+                self._by_discord_id[record.discord_id] = record
+
+        return changed
 
     async def note_manual_change(self, record):
         """Acknowledge a change the system did not make.

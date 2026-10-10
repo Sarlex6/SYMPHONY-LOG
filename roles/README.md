@@ -64,7 +64,7 @@ Managed area starts at **row 10**. Nothing at or above row 9 is ever written.
 |---|---|---|
 | A, B, I, M | design | never written — not in `WRITABLE_COLUMNS` |
 | C | CATEGORY | written; derived from the rank's configured category |
-| D | IDENTIFICATION | written; Discord **username**, display only |
+| D | IDENTIFICATION | written; `RobloxName (discordname)`, display only — the Discord half is re-checked every `sync.username_refresh_minutes` |
 | E | TIMEZONE | written; canonical IANA identifier |
 | F | RANK | written as the configured *display* string; dropdown managed |
 | G | BRANCH | written as the configured *display* string; dropdown managed |
@@ -124,6 +124,20 @@ each is a one-line change if you want it different.
 
 5. **Rank is authoritative over category.** Column C is a rendering of the rank's
    configured category, so a rank change relocates the person automatically.
+   Whether someone is out of place is judged by their **row position**, never by
+   reading column C back: that column is merged per section, so only the top row
+   of each block holds a value. The poller plans the layout every cycle and
+   restructures whenever anyone would move.
+
+   **Column D is a rendering too**: `RobloxName (discordname)`, built from the
+   two stored IDs. The halves are maintained differently because they change at
+   very different rates. The Discord half is re-read from Discord once a day
+   (`sync.username_refresh_minutes`, default 1440; `0` disables the pass), which
+   costs almost nothing since the names are in the bot's member cache. The
+   Roblox half is set at registration and then left alone; Roblox is only asked
+   for rows that are not in the combined format yet, once, to convert them. The
+   pass runs in the background and its result is written at the start of the
+   following poll. A hand-typed name in column D is overwritten by it.
 
 6. **`SLACK_ROWS = 0`** — exact fit, so no EMPTY rows accumulate. Raise it to
    trade a few EMPTY rows for fewer insert/delete API calls.

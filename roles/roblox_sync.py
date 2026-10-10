@@ -109,6 +109,38 @@ class RobloxSynchronizer:
 
         return membership.path is not None
 
+    async def fetch_usernames(self, roblox_ids, cfg=None):
+        """{roblox_id: username} for the given accounts, via Open Cloud.
+
+        Display data only — nothing here feeds synchronization or authority.
+        An account that cannot be looked up is simply absent from the result,
+        so a failed lookup can never blank a name that is already on the sheet.
+        Stops early if the API is refusing outright (bad key, rate limit).
+        """
+        cfg = cfg or roles_config.current()
+        api_key = roles_config.secret("ROBLOX_API_KEY")
+        if not api_key:
+            return {}
+
+        names = {}
+        for roblox_id in roblox_ids:
+            ok, data, error, retryable = await self._request(
+                "GET", f"{cfg.roblox.api_base}/users/{roblox_id}", api_key, cfg,
+            )
+            if ok:
+                name = str((data or {}).get("name") or "").strip()
+                if name:
+                    names[roblox_id] = name
+            elif retryable or "rejected the Open Cloud key" in error:
+                print(f"[Roles:Roblox] Username lookup stopped at {roblox_id}: {error}")
+                break
+            # Anything else (a deleted account, say) concerns this ID alone.
+
+            if cfg.roblox.request_delay:
+                await asyncio.sleep(cfg.roblox.request_delay)
+
+        return names
+
     # ── Application ──
 
     async def sync_record(self, record, cfg=None, dry_run=False, strip=False):

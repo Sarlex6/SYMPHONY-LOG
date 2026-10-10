@@ -7,6 +7,7 @@ that changes freely as the sheet is re-laid-out, while `record_uid`,
 """
 
 import hashlib
+import re
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -136,7 +137,7 @@ class UserRecord:
 
     # ── Human-facing columns ──
     category: "Category | None" = None
-    discord_username: str = ""          # column D, display only
+    username: str = ""                  # column D, "Roblox (discord)", display only
     timezone: str = ""                  # column E, canonical IANA identifier
     rank_key: str = ""                  # column F, key into RankRegistry
     branch_key: str = ""                # column G, key into BranchRegistry
@@ -163,7 +164,7 @@ class UserRecord:
         """True for a placeholder row rather than a real person."""
         if self.status is Status.EMPTY:
             return True
-        return not (self.discord_id or self.roblox_id or self.discord_username.strip())
+        return not (self.discord_id or self.roblox_id or self.username.strip())
 
     def is_incomplete(self):
         """A row with human-facing content but no bot identity.
@@ -211,8 +212,36 @@ class UserRecord:
 
     def label(self):
         """Short human label for logs and command responses."""
-        name = self.discord_username.strip() or f"<@{self.discord_id}>"
+        name = self.username.strip() or f"<@{self.discord_id}>"
         return f"{name} ({self.rank_key or 'no rank'})"
+
+
+#: Column D reads "RobloxName (discordname)". Neither kind of username can
+#: contain a parenthesis, so the pair splits back apart unambiguously.
+_IDENTIFICATION = re.compile(r"^(.*?)\s*\(([^()]*)\)\s*$")
+
+
+def format_identification(roblox_username, discord_username=""):
+    """'Builderman (builder.man)'. Either half may be missing."""
+    roblox_username = (roblox_username or "").strip()
+    discord_username = (discord_username or "").strip()
+    if roblox_username and discord_username:
+        return f"{roblox_username} ({discord_username})"
+    return roblox_username or discord_username
+
+
+def split_identification(text):
+    """Column D text -> (roblox_username, discord_username).
+
+    A bare name with no parenthesised part comes back as (text, ""). That is
+    the shape of every row written before the combined format existed, and the
+    username refresh uses the empty second half to recognise them.
+    """
+    text = (text or "").strip()
+    match = _IDENTIFICATION.match(text)
+    if not match:
+        return text, ""
+    return match.group(1).strip(), match.group(2).strip()
 
 
 def new_record_uid():

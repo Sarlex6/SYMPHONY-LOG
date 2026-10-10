@@ -443,6 +443,12 @@ class SyncConfig:
     #: Install conditional-format rules for column J. Off by default so an
     #: automated run never clobbers hand-made formatting rules.
     manage_status_formatting: bool = False
+    #: How often the Discord half of column D ("Roblox (discord)") is re-checked
+    #: against each member's current Discord username, in minutes. Once a day by
+    #: default. The Roblox half is NOT refreshed — it is set at registration and
+    #: looked up once more only for rows that predate the combined format. The
+    #: first pass runs right after startup. 0 turns the pass off entirely.
+    username_refresh_minutes: int = 1440
 
 
 # ── Root configuration object ────────────────────────────────────────────────

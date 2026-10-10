@@ -8,7 +8,7 @@ Column map (1-indexed, matching gspread):
     A  1   design only        NEVER WRITTEN
     B  2   design only        NEVER WRITTEN
     C  3   CATEGORY           managed
-    D  4   IDENTIFICATION     managed (Discord username — display only)
+    D  4   IDENTIFICATION     managed ("Roblox (discord)" usernames — display only)
     E  5   TIMEZONE           managed
     F  6   RANK               managed (dropdown / data validation)
     G  7   BRANCH             managed (dropdown / data validation)
