@@ -146,6 +146,9 @@ class UserRecord:
     verification: str = ""              # column L, provenance marker
 
     # ── Technical columns ──
+    #: Keys of the grantable roles (role modifiers) this person holds, sorted.
+    #: A tuple so snapshots stay immutable and compare by value.
+    grants: tuple = ()
     loa_raw: str = ""
     sync_hash: str = ""
     sync_status: SyncStatus = SyncStatus.NEVER
@@ -192,6 +195,10 @@ class UserRecord:
             self.category.value if self.category else "",
             self.status.value if self.status else "",
         ))
+        # Appended only when present, so a record with no grantable roles keeps
+        # the fingerprint it had before they existed and is not re-synchronized.
+        if self.grants:
+            payload += "|" + format_grants(self.grants)
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
     def needs_sync(self):
@@ -210,6 +217,23 @@ class UserRecord:
 
 def new_record_uid():
     return uuid.uuid4().hex[:12]
+
+
+#: Separator between grantable role keys in the technical GRANTS column.
+GRANTS_SEPARATOR = ","
+
+
+def parse_grants(raw):
+    """'b, A,,a' -> ('A', 'B'). Normalized, de-duplicated and sorted, so the
+    same set of grantable roles always reads back as the same value."""
+    if not raw:
+        return ()
+    keys = {part.strip().upper() for part in str(raw).split(GRANTS_SEPARATOR)}
+    return tuple(sorted(key for key in keys if key))
+
+
+def format_grants(grants):
+    return GRANTS_SEPARATOR.join(grants or ())
 
 
 # ── Action plumbing (shared by Discord commands and Angela) ─────────────────

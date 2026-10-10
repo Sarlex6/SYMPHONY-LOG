@@ -42,7 +42,7 @@ back to the sheet.
 | `permissions.py` | **Centralized authorization.** The only place an action is allowed or refused. |
 | `service.py` | `RoleManagerService` — the single mutation path. |
 | `sync_queue.py` | Retryable outbound sync with backoff and a persisted dead-letter list. |
-| `discord_sync.py` | Rank → main role + auxiliary roles, rank+branch → branch role. |
+| `discord_sync.py` | Rank → main role + auxiliary roles, rank+branch → branch roles, universal ranks, grantable roles. |
 | `roblox_sync.py` | rank+branch → group roles, via Open Cloud v2 multi-role. |
 | `roblox_oauth.py` | Discord → Roblox account verification, **registration only**. |
 | `oauth_routes.py` | The OAuth callback, mounted on the existing aiohttp server. |
@@ -73,7 +73,11 @@ Managed area starts at **row 10**. Nothing at or above row 9 is ever written.
 | K | DATE OF ENTRY | `MM.DD.YYYY`, written once at registration, never again |
 | L | VERIFICATION | `AUTOMATIC EXECUTIVE SYSTEM` on system changes |
 | N, O | gap | never written |
-| P–X | technical | Discord ID, Roblox ID, record UID, sync hash, sync status, last sync, revision, LOA, source — hidden, 40px |
+| P–Y | technical | Discord ID, Roblox ID, record UID, sync hash, sync status, last sync, revision, LOA, source, grantable roles — hidden, 40px |
+
+Column Y was added after the sheet was built. If the worksheet is narrower than
+that, `sheets_gateway.ensure_grid_width()` appends the missing column at the far
+right edge, hidden, before the first read — nothing in the designed area moves.
 
 The visual footer row (initially 113) stays a design boundary. Inserting managed
 rows above it pushes it down, so its position is read live rather than hardcoded.
@@ -117,6 +121,88 @@ each is a one-line change if you want it different.
 
 6. **`SLACK_ROWS = 0`** — exact fit, so no EMPTY rows accumulate. Raise it to
    trade a few EMPTY rows for fewer insert/delete API calls.
+
+---
+
+## Discord role model
+
+What a member holds in one server is computed, never accumulated:
+
+```
+main server     rank's primary role
+              + rank's auxiliary roles
+              + their branch's auxiliary roles
+
+branch server   that branch's discord_roles_by_rank[rank]
+                — only if the member belongs to the branch,
+                  OR the rank is universal
+
+then, per server:
+desired = (the above − roles a held grantable role cancels)
+          | roles a held grantable role adds
+```
+
+Reconciliation is `add = desired − current`, `remove = (managed ∩ current) −
+desired`, where `managed` is every role ID the configuration owns in that server.
+A role outside that set is never touched.
+
+**Every sync visits the main server and every branch server**, not only the
+member's own branch. Where a member holds roles depends on more than their
+current branch, and a server that is skipped is a server where stale roles are
+never removed — the old branch after a transfer, every branch server after a
+demotion out of a universal rank, a revoked grantable role. A member who is not
+in a server costs a cache lookup there, not an API call.
+
+### Universal ranks
+
+`"universal": true` on a rank marks it as not tied to one branch (Executive
+Team, CEO). An Associate in INTELLIGENCE who also sits in the ECHELON server gets
+nothing there: they are not part of ECHELON. A universal rank is recognized
+everywhere, so its holder receives `discord_roles_by_rank[rank]` in every branch
+server that maps the rank, whatever column G says — including N/A.
+
+It affects branch **servers** only. The branch auxiliary roles in the main server
+and the Roblox branch roles still follow the member's own branch.
+
+### Grantable roles
+
+A grantable role is a modifier held *on top of* a rank. It is not a rank: it
+never changes column F, the category, the member's row or their standing in the
+permission system. It only adjusts Discord roles, in exactly one server.
+
+```json
+"grantable_roles": {
+  "EVENT_HOST": {
+    "display": "Event Host",
+    "guild": "MAIN",
+    "add_discord_role_ids": [111111111111111111],
+    "remove_discord_role_ids": [222222222222222222]
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `guild` | `"MAIN"`, or a branch key for that branch's own server. A branch scope does not require the member to belong to that branch. |
+| `add_discord_role_ids` | Granted on top of the rank's roles. Managed, so they come off on revocation. |
+| `remove_discord_role_ids` | Roles the rank or branch would otherwise give there, which this cancels. |
+
+- **Commands:** `/grant add user role` and `/grant remove user role`.
+- **Authority:** whoever may use `SET_RANK` on the member. There is no separate
+  permission to configure.
+- **Storage:** the keys a member holds live in technical column Y of their own
+  row, comma-separated. They travel with the record through rank and branch
+  changes and re-layouts, and go when the record does. Editing the cell by hand
+  is detected by the poller and synchronized like any other manual edit.
+- **A cancel only subtracts from managed roles.** `remove_discord_role_ids` is
+  deliberately not added to the managed set — if it were, the role would be
+  stripped from every member who merely held it. Listing a role no rank or branch
+  grants therefore does nothing, and `validate_configuration()` says so.
+- **Add wins.** If one held grantable role adds a role another one cancels, the
+  member keeps it.
+- **Deleted from the config while still held:** ignored by synchronization,
+  listed by `/aria whois` as *not configured*, counted by `/aria status`, and
+  still revocable with `/grant remove`.
 
 ---
 

@@ -101,14 +101,68 @@ async def get_footer_row():
     return footer
 
 
+_grid_lock = asyncio.Lock()
+
+
+async def ensure_grid_width():
+    """Widen the worksheet if it is too narrow for every technical column.
+
+    The Sheets API rejects a read or a write that reaches past the grid, so a
+    technical column added after the sheet was built has to exist physically
+    before anything touches it. Columns are only ever appended at the far right
+    edge, hidden, so the designed area is not disturbed.
+
+    Costs nothing once the sheet is wide enough: the column count comes from
+    the cached worksheet properties.
+    """
+    async with _grid_lock:
+        worksheet = await get_worksheet()
+        current = worksheet.col_count
+        missing = columns.TECH_COL_END - current
+        if missing <= 0:
+            return
+
+        body = {
+            "requests": [
+                {"appendDimension": {
+                    "sheetId": worksheet.id,
+                    "dimension": "COLUMNS",
+                    "length": missing,
+                }},
+                {"updateDimensionProperties": {
+                    "range": {
+                        "sheetId": worksheet.id,
+                        "dimension": "COLUMNS",
+                        "startIndex": current,
+                        "endIndex": current + missing,
+                    },
+                    "properties": {"pixelSize": 40, "hiddenByUser": True},
+                    "fields": "pixelSize,hiddenByUser",
+                }},
+            ]
+        }
+
+        try:
+            await asyncio.to_thread(spreadsheet.batch_update, body)
+        except gspread.exceptions.APIError as exc:
+            raise TransientSyncError(
+                f"Failed to add {missing} technical column(s): {exc}"
+            ) from exc
+
+        await get_worksheet(force_refresh=True)
+        print(f"[Roles] Added {missing} hidden technical column(s) "
+              f"(sheet is now {current + missing} columns wide).")
+
+
 # ── Reads ────────────────────────────────────────────────────────────────────
 
 async def read_managed_block():
-    """Read A10:X<footer-1> as a padded 2D list.
+    """Read A10:Y<footer-1> as a padded 2D list.
 
     Returns (rows, footer_row) where rows[i] corresponds to sheet row
     FIRST_MANAGED_ROW + i and is always READ_COL_END wide.
     """
+    await ensure_grid_width()
     worksheet = await get_worksheet()
     footer_row = await get_footer_row()
     last_row = columns.last_managed_row(footer_row)
@@ -291,6 +345,7 @@ async def ensure_technical_columns():
     Safe to call repeatedly. Writes headers only if columns.WRITE_TECH_HEADERS
     is enabled, since the header row sits above the managed area.
     """
+    await ensure_grid_width()
     worksheet = await get_worksheet()
 
     requests = [{

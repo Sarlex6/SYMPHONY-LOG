@@ -450,6 +450,101 @@ class RoleManagerService:
             previous_branch=previous_branch,
         )
 
+    # ── Grantable roles ──
+
+    async def grant_role(self, context, grantable_input, target_discord_id):
+        """Give a member a grantable role, on top of their rank."""
+        return await self._change_grant(context, grantable_input, target_discord_id, give=True)
+
+    async def revoke_role(self, context, grantable_input, target_discord_id):
+        """Take a grantable role back."""
+        return await self._change_grant(context, grantable_input, target_discord_id, give=False)
+
+    async def _change_grant(self, context, grantable_input, target_discord_id, give):
+        """Add or remove one grantable role on a record.
+
+        A grantable role is a modifier, not a rank: column F, the category and
+        the member's standing in the permission system are untouched. Authority
+        to hand one out is exactly the authority to set the member's rank.
+        """
+        cfg = roles_config.current()
+
+        allowed, target, denial = self._authorize(
+            context, Permission.SET_RANK, target_discord_id
+        )
+        if not allowed:
+            return denial
+
+        grantable = cfg.grantable(grantable_input) or cfg.grantable_by_display(grantable_input)
+        raw_key = str(grantable_input or "").strip().upper()
+
+        if grantable is None:
+            # A role that has since been deleted from the configuration can
+            # still be sitting on a record. It must stay revocable.
+            if not give and raw_key in target.grants:
+                key, display = raw_key, raw_key
+            else:
+                available = ", ".join(
+                    sorted(g.display for g in cfg.grantable_roles.values())
+                ) or "none configured yet"
+                return ActionResult.invalid(
+                    f"`{grantable_input}` is not a configured grantable role. "
+                    f"Available: {available}."
+                )
+        else:
+            key, display = grantable.key, grantable.display
+
+        name = target.discord_username or target.discord_id
+
+        if give:
+            if key in target.grants:
+                return ActionResult.invalid(f"{name} already holds **{display}**.")
+            if not cfg.grantable_guild_id(grantable):
+                return ActionResult.invalid(
+                    f"**{display}** cannot be granted yet: its guild "
+                    f"`{grantable.guild}` does not resolve to a configured server."
+                )
+        elif key not in target.grants:
+            return ActionResult.invalid(f"{name} does not hold **{display}**.")
+
+        def apply(current):
+            held = set(current.grants)
+            if give:
+                held.add(key)
+            else:
+                held.discard(key)
+            return current.with_changes(grants=tuple(sorted(held)))
+
+        verb = "grant" if give else "revoke"
+        saved = await self._commit(target, f"{verb} {key}", transform=apply)
+
+        job = self.sync_queue.enqueue(saved, reason=f"{verb} {key}")
+
+        if give:
+            effect = []
+            if grantable.add_discord_role_ids:
+                effect.append(f"adds {len(grantable.add_discord_role_ids)} role(s)")
+            if grantable.remove_discord_role_ids:
+                effect.append(f"removes {len(grantable.remove_discord_role_ids)} role(s)")
+            where = cfg.grantable_guild_label(grantable)
+            message = (
+                f"{name} now holds **{display}** "
+                f"({', '.join(effect) or 'no roles configured'} in {where}). "
+                f"Their rank is unchanged. Discord synchronization queued."
+            )
+        else:
+            message = (
+                f"**{display}** revoked from {name}. Their rank is unchanged. "
+                f"Discord synchronization queued."
+            )
+
+        return ActionResult.success(
+            message,
+            record=saved,
+            queued_targets=["DISCORD"] if job else [],
+            grantable=key,
+        )
+
     async def set_status(self, context, status_input, target_discord_id=None):
         """Set column J."""
         target_id = target_discord_id or context.actor_discord_id
@@ -642,6 +737,7 @@ class RoleManagerService:
             f"**Misplaced:** {len(report['misplaced'])}",
             f"**Duplicates:** {len(report['duplicates'])}",
             f"**Unknown ranks:** {len(report['unknown_ranks'])}",
+            f"**Unknown grantable roles:** {len(report['unknown_grants'])}",
             f"**Awaiting sync:** {len(report['unsynced'])}",
             f"**Sync queue:** {stats['queued']} queued, "
             f"{stats['dead_letters']} failed, worker "
@@ -692,11 +788,17 @@ class RoleManagerService:
 
         return True, target, None
 
-    async def _commit(self, record, reason):
+    async def _commit(self, record, reason, transform=None):
         """Write one record authoritatively, under the sheet write lock.
 
         Reloads first so the write is applied to current state rather than to a
         snapshot that may have aged while the command was being processed.
+
+        `transform` is for changes that are relative to the current value
+        instead of a replacement of it — adding one grantable role to the set a
+        member holds. It receives the freshly read record and returns the one
+        to save, so two such changes arriving together both land instead of the
+        second overwriting the first.
         """
         async with self.gateway.write_lock:
             await self.repository.load()
@@ -707,14 +809,17 @@ class RoleManagerService:
                     "The record disappeared from the sheet before the change could be saved."
                 )
 
-            # Re-apply the intended change onto the freshly read row, so a
-            # concurrent edit to an unrelated field is not clobbered.
-            merged = current.with_changes(**{
-                field: getattr(record, field)
-                for field in ("rank_key", "branch_key", "timezone", "status",
-                              "loa_raw", "discord_username", "category")
-                if getattr(record, field) != getattr(current, field)
-            })
+            if transform is not None:
+                merged = transform(current)
+            else:
+                # Re-apply the intended change onto the freshly read row, so a
+                # concurrent edit to an unrelated field is not clobbered.
+                merged = current.with_changes(**{
+                    field: getattr(record, field)
+                    for field in ("rank_key", "branch_key", "timezone", "status",
+                                  "loa_raw", "discord_username", "category")
+                    if getattr(record, field) != getattr(current, field)
+                })
 
             saved = await self.repository.save_record(merged)
 
@@ -742,6 +847,12 @@ class RoleManagerService:
         ]
         if record.loa_raw:
             lines.append(f"LOA: {loa.describe(loa.LOAValue.from_storage(record.loa_raw))}")
+        if record.grants:
+            names = []
+            for key in record.grants:
+                grantable = cfg.grantable(key)
+                names.append(grantable.display if grantable else f"{key} (not configured)")
+            lines.append(f"Grantable roles: {', '.join(names)}")
         return "\n".join(lines)
 
 

@@ -35,6 +35,11 @@
     "                       Optional per-entry form, if a branch role lives in a different group:",
     "                         \"ECHELON\": { \"role_id\": 1, \"group_id\": 12345 }",
     "                       or set branches.<KEY>.roblox_group_id once for that whole branch.",
+    "universal              true for ranks that are not tied to one branch (Executive Team, CEO).",
+    "                       A universal rank receives its discord_roles_by_rank roles in EVERY",
+    "                       branch server that maps the rank, whatever the member's own branch.",
+    "                       A normal rank only receives them in its own branch's server.",
+    "                       Discord only: Roblox branch roles still follow the member's branch.",
     "syncs_roblox           defaults to true for normal ranks, false for special ranks."
   ],
   "ranks": {
@@ -69,7 +74,7 @@
         "ECHELON": null,
         "INTELLIGENCE": null,
         "MEDICAL": null,
-        "CONTINGENCY": null,
+        "CONTINGENCY": 693761110,
         "R&D": null
       }
     },
@@ -84,11 +89,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108666454,
-        "ECHELON": null,
+        "ECHELON": 700209092,
         "INTELLIGENCE": null,
         "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "CONTINGENCY": 108663754,
+        "R&D": 699447072
       }
     },
 
@@ -102,11 +107,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108663748,
-        "ECHELON": null,
+        "ECHELON": 700209092,
         "INTELLIGENCE": null,
         "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "CONTINGENCY": 108663754,
+        "R&D": 699447072
       }
     },
 
@@ -120,11 +125,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108663747,
-        "ECHELON": null,
+        "ECHELON": 700209092,
         "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "MEDICAL": 688463132,
+        "CONTINGENCY": 108663754,
+        "R&D": 699447072
       }
     },
 
@@ -138,11 +143,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108663737,
-        "ECHELON": null,
+        "ECHELON": 700209092,
         "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "MEDICAL": 688463132,
+        "CONTINGENCY": 641003042,
+        "R&D": 699447072
       }
     },
 
@@ -156,11 +161,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 382936000,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 700209092,
+        "INTELLIGENCE": 700761062,
+        "MEDICAL": 688739039,
+        "CONTINGENCY": 641003042,
+        "R&D": 699447072
       }
     },
 
@@ -174,11 +179,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 382382000,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 700209092,
+        "INTELLIGENCE": 700761062,
+        "MEDICAL": 688739039,
+        "CONTINGENCY": 642287025,
+        "R&D": 699447072
       }
     },
 
@@ -192,11 +197,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108616195,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 700209092,
+        "INTELLIGENCE": 700761062,
+        "MEDICAL": 688739039,
+        "CONTINGENCY": 642287025,
+        "R&D": 699447072
       }
     },
 
@@ -210,11 +215,11 @@
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
         "N/A": 108616201,
-        "ECHELON": null,
-        "INTELLIGENCE": null,
-        "MEDICAL": null,
-        "CONTINGENCY": null,
-        "R&D": null
+        "ECHELON": 700209092,
+        "INTELLIGENCE": 700761062,
+        "MEDICAL": 688739039,
+        "CONTINGENCY": 642287025,
+        "R&D": 699447072
       }
     },
 
@@ -295,6 +300,7 @@
       "category": "HIGH-RANK",
       "order": 14,
       "special": false,
+      "universal": true,
       "main_discord_role_id": 1360740868033876060,
       "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284574764830762, 1372890578840457357, 1372346058214080545, 1372346049255178301],
       "syncs_roblox": true,
@@ -313,6 +319,7 @@
       "category": "HIGH-RANK",
       "order": 15,
       "special": false,
+      "universal": true,
       "main_discord_role_id": 1360740867274444841,
       "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284574764830762, 1372890578840457357, 1372346058214080545, 1372346049255178301],
       "syncs_roblox": true,
@@ -343,24 +350,17 @@
         "CONTINGENCY": 642287025,
         "R&D": 698407091
       }
-    },
-
-    "_EXAMPLE_SPECIAL_RANK": {
-      "display": "PLACEHOLDER SPECIAL RANK",
-      "category": "HIGH-RANK",
-      "order": 0,
-      "special": true,
-      "special_group_order": 1,
-      "main_discord_role_id": null,
-      "syncs_roblox": false,
-      "roblox_roles_by_branch": {}
     }
+
+  
   },
 
   "_branches_README": [
     "One entry per branch, plus the required N/A entry for users with no branch.",
     "discord_guild_id       that branch's own Discord server",
-    "discord_roles_by_rank  { RANK_KEY: role_id } applied inside that branch server",
+    "discord_roles_by_rank  { RANK_KEY: [role_id, ...] } applied inside that branch server.",
+    "                       A single id is accepted too. Given to members of this branch,",
+    "                       and to holders of a universal rank whatever their branch.",
     "main_aux_discord_role_ids  MAIN-SERVER-ONLY roles granted by belonging to this branch.",
     "                       This is the branch half of the auxiliary mapping: it lives in the",
     "                       MAIN server, not the branch server, so a member's branch is visible",
@@ -380,7 +380,21 @@
       "display": "ECHELON",
       "discord_guild_id": 1482547363082932417,
       "discord_roles_by_rank": {
-        "_EXAMPLE_NORMAL_RANK": null
+        "TRAINING_ASSOCIATE": [1482630111827071057, 1482547363490037794, 1494047702990983198],
+        "JUNIOR_ASSOCIATE" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037790, 1482547363502358550],
+        "ASSOCIATE" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037790, 1482547363502358552],
+        "SENIOR_ASSOCIATE" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363082932424, 1482547363502358553],
+        "SPECIALIST" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363082932424, 1494047810906099753],
+        "SENIOR_SPECIALIST" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363082932423, 1482547363502358555],
+        "TEAM_LEADER" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363082932423, 1482547363502358556],
+        "OPERATIONS_COORDINATOR" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363082932423, 1482547363514945617],
+        "OPERATIONS_MANAGER" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363082932422, 1482547363514945618],
+        "BRANCH_SUPERVISOR" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482547363514945621],
+        "BRANCH_MANAGER" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482547363514945622],
+        "BRANCH_EXECUTIVE" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482547363514945622],
+        "BRANCH_HEAD" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482627405511131227],
+        "EXECUTIVE_TEAM" : [1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932421, 1482547363514945624],
+        "CHIEF-EXECUTIVE_OFFICER" : [1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932421, 1482547363527659702]
       },
       "main_aux_discord_role_ids": [1375155240596275270]
     },
@@ -388,35 +402,109 @@
       "display": "INTELLIGENCE",
       "discord_guild_id": 1478552893085716563,
       "discord_roles_by_rank": {
-        "_EXAMPLE_NORMAL_RANK": null
+        "TRAINING_ASSOCIATE": [1478552893534503058, 1478552893534503059, 1478552893564125270],
+        "JUNIOR_ASSOCIATE" : [1478552893534503058, 1478552893534503059, 1478552893534503054, 1478552893564125271],
+        "ASSOCIATE" : [1478552893534503058, 1478552893534503059, 1478552893534503054, 1478552893597421703],
+        "SENIOR_ASSOCIATE" : [1478552893534503058, 1478552893534503059, 1478552893085716570, 1548093299091574834],
+        "SPECIALIST" : [1478552893534503058, 1478552893534503059, 1478552893085716570, 1548092750556299325],
+        "SENIOR_SPECIALIST" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893085716569, 1548092821486047252],
+        "TEAM_LEADER" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893085716569, 1478552893564125273],
+        "OPERATIONS_COORDINATOR" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893085716569, 1478552893564125275],
+        "OPERATIONS_MANAGER" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893085716568, 1478552893597421701],
+        "BRANCH_SUPERVISOR" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893534503062, 1478552893085716568, 1478552893597421705],
+        "BRANCH_MANAGER" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 478552893534503061, 1478552893534503062, 1478552893085716568, 1478552893597421706],
+        "BRANCH_EXECUTIVE" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893534503062, 1478552893085716568, 1478552893597421706],
+        "BRANCH_HEAD" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893534503062, 1478552893085716568, 1478552893597421707],
+        "EXECUTIVE_TEAM" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893534503062, 1478552893085716567, 1478552893597421708],
+        "CHIEF-EXECUTIVE_OFFICER" : [1478552893534503058, 1478552893534503059, 1478552893534503060, 1478552893534503061, 1478552893534503062, 1478552893085716567, 1478552893651943679]
       },
       "main_aux_discord_role_ids": [1372811213091766292]
     },
     "MEDICAL": {
       "display": "MEDICAL",
-      "discord_guild_id": 1478552893085716563, 
+      "discord_guild_id": null, 
       "discord_roles_by_rank": {
-        "_EXAMPLE_NORMAL_RANK": null
       },
       "main_aux_discord_role_ids": [1372811127888547941]
     },
     "R&D": {
       "display": "R&D",
-      "discord_guild_id": 1478552893085716563,
+      "discord_guild_id": 1482531123614584978,
       "discord_roles_by_rank": {
-        "_EXAMPLE_NORMAL_RANK": null
+        "TRAINING_ASSOCIATE": [1482531124004782230, 1482531124004782231, 1482531124029685783],
+        "JUNIOR_ASSOCIATE" : [1482531124004782230, 1482531124004782231, 1482531124004782226, 1482531124029685784],
+        "ASSOCIATE" : [1482531124004782230, 1482531124004782231, 1482531124004782226, 1482531124029685785],
+        "SENIOR_ASSOCIATE" : [1482531124004782230, 1482531124004782231, 1482531123614584985, 1550268133044912248],
+        "SPECIALIST" : [1482531124004782230, 1482531124004782231, 1482531123614584985, 1548087479956144199],
+        "SENIOR_SPECIALIST" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531123614584984, 1499812364961452213],
+        "TEAM_LEADER" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531123614584984, 1482531124029685787],
+        "OPERATIONS_COORDINATOR" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531123614584984, 1482531124029685788],
+        "OPERATIONS_MANAGER" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531123614584983, 1548087878842847302],
+        "BRANCH_SUPERVISOR" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531124029685789],
+        "BRANCH_MANAGER" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531123614584983, 1482531124063371346],
+        "BRANCH_EXECUTIVE" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531123614584983, 1482531124063371346],
+        "BRANCH_HEAD" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531123614584983, 1548088114516332646],
+        "EXECUTIVE_TEAM" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531123614584982, 1482531124063371352],
+        "CHIEF-EXECUTIVE_OFFICER" : [1482531124004782230, 1482531124004782231, 1482531124004782232, 1482531124004782233, 1482531124004782234, 1482531123614584982, 1482531124084478086]
       },
       "main_aux_discord_role_ids": [1372811383049293885]
     },
     "CONTINGENCY": {
       "display": "CONTINGENCY",
-      "discord_guild_id": 1478552893085716563,
+      "discord_guild_id": 1404090605474283640,
       "discord_roles_by_rank": {
-        "_EXAMPLE_NORMAL_RANK": null
+        "TRAINING_ASSOCIATE": [1404090605511905371, 1404090605511905372, 1494371224913055754],
+        "JUNIOR_ASSOCIATE" : [1404090605511905371, 1404090605511905372, 1404090605474283646, 1404090605554110572],
+        "ASSOCIATE" : [1404090605511905371, 1404090605511905372, 1404090605474283646, 1404090605554110573],
+        "SENIOR_ASSOCIATE" : [1404090605511905371, 1404090605511905372, 1404090605474283645, 1404090605474283644, 1404090605554110574],
+        "SPECIALIST" : [1404090605511905371, 1404090605511905372, 1404090605474283645, 1404090605474283644, 1404090605554110575],
+        "SENIOR_SPECIALIST" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605474283644, 1548427696923484200],
+        "TEAM_LEADER" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605474283644, 1404090605579141255],
+        "OPERATIONS_COORDINATOR" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605474283644, 1404090605579141256],
+        "OPERATIONS_MANAGER" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605474283643, 1548094399211245568],
+        "BRANCH_SUPERVISOR" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605474283643, 1404090605579141257],
+        "BRANCH_MANAGER" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605511905375, 1404090605474283643, 1548095381857108069],
+        "BRANCH_EXECUTIVE" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605511905375, 1404090605474283643, 1548095381857108069],
+        "BRANCH_HEAD" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605511905375, 1404090605474283643, 1404090605612568579],
+        "EXECUTIVE_TEAM" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605511905375, 1404090605474283642, 1404090605612568581],
+        "CHIEF-EXECUTIVE_OFFICER" : [1404090605511905371, 1404090605511905372, 1404090605511905373, 1404090605511905374, 1404090605511905375, 1404090605474283642, 1404090605612568585]
       },
       "main_aux_discord_role_ids": [1372811280196571136]
     }
     
+  },
+
+  "_grantable_roles_README": [
+    "Role modifiers a member can hold ON TOP of their rank. Not ranks: holding one never",
+    "changes column F, the member's category or their standing in the permission system.",
+    "Given and revoked with /grant add and /grant remove by anyone who may use SET_RANK on",
+    "the member. Stored on the member's record (hidden technical column Y), so they survive",
+    "rank and branch changes until revoked.",
+    "",
+    "key                      stable internal id, UPPERCASE. Must start with a letter; letters,",
+    "                         digits, spaces and _ & . / - only (no commas).",
+    "display                  the name shown in /grant and in /aria whois",
+    "guild                    WHERE it applies: \"MAIN\" for the main server, or a branch key",
+    "                         (e.g. \"ECHELON\") for that branch's own server. One server per",
+    "                         grantable role. A branch scope does NOT require the member to",
+    "                         belong to that branch.",
+    "add_discord_role_ids     roles granted on top of what the rank and branch already give.",
+    "                         Managed, so they come off again when the role is revoked.",
+    "remove_discord_role_ids  roles the rank or branch would otherwise give in that server,",
+    "                         which this modifier cancels. Only subtracts from those roles:",
+    "                         listing a role no rank or branch grants has no effect.",
+    "",
+    "If one held grantable role adds a role that another one removes, the add wins.",
+    "",
+    "Example:",
+    "  \"EVENT_HOST\": {",
+    "    \"display\": \"Event Host\",",
+    "    \"guild\": \"MAIN\",",
+    "    \"add_discord_role_ids\": [111111111111111111],",
+    "    \"remove_discord_role_ids\": []",
+    "  }"
+  ],
+  "grantable_roles": {
   },
 
   "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],
@@ -533,7 +621,7 @@
         "min_rank_order": null,
         "grants": [
           { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] },
-          { "allowed_relations": ["SELF"], "allowed_categories": ["HIGH-RANK"] }
+          { "allowed_relations": ["SELF"], "min_rank_order": 14 }
         ],
         "note": "high ranks only. Supply allowed_relations (likely LOWER) and a min_rank_order."
       },

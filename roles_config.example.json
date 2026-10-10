@@ -35,6 +35,11 @@
     "                       Optional per-entry form, if a branch role lives in a different group:",
     "                         \"ECHELON\": { \"role_id\": 1, \"group_id\": 12345 }",
     "                       or set branches.<KEY>.roblox_group_id once for that whole branch.",
+    "universal              true for ranks that are not tied to one branch (Executive Team, CEO).",
+    "                       A universal rank receives its discord_roles_by_rank roles in EVERY",
+    "                       branch server that maps the rank, whatever the member's own branch.",
+    "                       A normal rank only receives them in its own branch's server.",
+    "                       Discord only: Roblox branch roles still follow the member's branch.",
     "syncs_roblox           defaults to true for normal ranks, false for special ranks."
   ],
   "ranks": {
@@ -277,6 +282,7 @@
       "category": "HIGH-RANK",
       "order": 14,
       "special": false,
+      "universal": true,
       "main_discord_role_id": 1360740868033876060,
       "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284574764830762, 1372890578840457357, 1372346058214080545, 1372346049255178301],
       "syncs_roblox": true,
@@ -305,7 +311,9 @@
   "_branches_README": [
     "One entry per branch, plus the required N/A entry for users with no branch.",
     "discord_guild_id       that branch's own Discord server",
-    "discord_roles_by_rank  { RANK_KEY: role_id } applied inside that branch server",
+    "discord_roles_by_rank  { RANK_KEY: [role_id, ...] } applied inside that branch server.",
+    "                       A single id is accepted too. Given to members of this branch,",
+    "                       and to holders of a universal rank whatever their branch.",
     "main_aux_discord_role_ids  MAIN-SERVER-ONLY roles granted by belonging to this branch.",
     "                       This is the branch half of the auxiliary mapping: it lives in the",
     "                       MAIN server, not the branch server, so a member's branch is visible",
@@ -338,6 +346,39 @@
       "main_aux_discord_role_ids": [1372811213091766292]
     }
     
+  },
+
+  "_grantable_roles_README": [
+    "Role modifiers a member can hold ON TOP of their rank. Not ranks: holding one never",
+    "changes column F, the member's category or their standing in the permission system.",
+    "Given and revoked with /grant add and /grant remove by anyone who may use SET_RANK on",
+    "the member. Stored on the member's record (hidden technical column Y), so they survive",
+    "rank and branch changes until revoked.",
+    "",
+    "key                      stable internal id, UPPERCASE. Must start with a letter; letters,",
+    "                         digits, spaces and _ & . / - only (no commas).",
+    "display                  the name shown in /grant and in /aria whois",
+    "guild                    WHERE it applies: \"MAIN\" for the main server, or a branch key",
+    "                         (e.g. \"ECHELON\") for that branch's own server. One server per",
+    "                         grantable role. A branch scope does NOT require the member to",
+    "                         belong to that branch.",
+    "add_discord_role_ids     roles granted on top of what the rank and branch already give.",
+    "                         Managed, so they come off again when the role is revoked.",
+    "remove_discord_role_ids  roles the rank or branch would otherwise give in that server,",
+    "                         which this modifier cancels. Only subtracts from those roles:",
+    "                         listing a role no rank or branch grants has no effect.",
+    "",
+    "If one held grantable role adds a role that another one removes, the add wins.",
+    "",
+    "Example:",
+    "  \"EVENT_HOST\": {",
+    "    \"display\": \"Event Host\",",
+    "    \"guild\": \"MAIN\",",
+    "    \"add_discord_role_ids\": [111111111111111111],",
+    "    \"remove_discord_role_ids\": []",
+    "  }"
+  ],
+  "grantable_roles": {
   },
 
   "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],

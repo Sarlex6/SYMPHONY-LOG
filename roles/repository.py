@@ -28,7 +28,9 @@ from roles.models import (
     SyncStatus,
     UserRecord,
     VERIFICATION_SYSTEM_MARKER,
+    format_grants,
     new_record_uid,
+    parse_grants,
 )
 
 
@@ -93,6 +95,7 @@ def row_to_record(row, row_number, cfg=None):
         last_sync_at=_cell(row, columns.COL_TECH_LAST_SYNC_AT),
         revision=_as_int(_cell(row, columns.COL_TECH_REVISION)),
         loa_raw=_cell(row, columns.COL_TECH_LOA),
+        grants=parse_grants(_cell(row, columns.COL_TECH_GRANTS)),
         source=_parse_enum(ChangeSource, _cell(row, columns.COL_TECH_SOURCE), ChangeSource.MANUAL),
     )
 
@@ -140,6 +143,7 @@ def record_to_cells(record, row_number, cfg, include_notes=None, write_category=
         columns.COL_TECH_REVISION: str(record.revision),
         columns.COL_TECH_LOA: record.loa_raw,
         columns.COL_TECH_SOURCE: record.source.value,
+        columns.COL_TECH_GRANTS: format_grants(record.grants),
     }
 
     # Notes are never authored by the system, but they have to travel with the
@@ -190,14 +194,16 @@ class RecordChange:
         """Whether this change requires touching Discord or Roblox."""
         if self.kind in (RecordChange.ADDED, RecordChange.REMOVED):
             return True
-        return bool({"rank_key", "branch_key", "discord_id", "roblox_id"} & set(self.fields))
+        return bool(
+            {"rank_key", "branch_key", "discord_id", "roblox_id", "grants"} & set(self.fields)
+        )
 
 
 #: Fields compared when detecting a manual edit. Excludes technical bookkeeping
 #: so the system's own writes do not read back as user changes.
 _COMPARED_FIELDS = (
     "category", "discord_username", "timezone", "rank_key", "branch_key",
-    "status", "entry_date", "discord_id", "roblox_id", "loa_raw",
+    "status", "entry_date", "discord_id", "roblox_id", "loa_raw", "grants",
 )
 
 
@@ -592,5 +598,9 @@ class PersonnelRepository:
             "misplaced": layout.find_misplaced(records, cfg),
             "duplicates": layout.find_duplicates(records),
             "unknown_ranks": layout.unknown_ranks(records, cfg),
+            "unknown_grants": [
+                r for r in records
+                if any(cfg.grantable(key) is None for key in r.grants)
+            ],
             "unsynced": [r for r in records if r.needs_sync()],
         }

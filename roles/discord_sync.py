@@ -82,10 +82,18 @@ class DiscordSynchronizer:
             main server    primary rank role
                          + auxiliary roles from the rank
                          + auxiliary roles from the branch
-            branch server  branch role for the rank
+            branch server  that branch's roles for the rank — but only if the
+                           member belongs to the branch, or the rank is universal
 
         Auxiliary roles are main-server-only by design, so a member's rank and
         branch are both visible in the one server everybody is in.
+
+        Grantable roles are applied last, on top of that foundation:
+
+            desired = (foundation - roles a grant cancels) | roles a grant adds
+
+        An explicit add always wins over a cancel, so one grantable role can
+        never silently undo what another one hands out.
         """
         cfg = cfg or roles_config.current()
         managed = cfg.managed_role_ids(guild_id)
@@ -106,35 +114,37 @@ class DiscordSynchronizer:
             if branch:
                 desired.update(branch.main_aux_discord_role_ids)
 
-        if branch and branch.discord_guild_id == guild_id:
-            branch_role = branch.discord_role_for(rank.key)
-            if branch_role:
-                desired.add(branch_role)
+        for candidate in cfg.branches.values():
+            if not candidate.discord_guild_id or candidate.discord_guild_id != guild_id:
+                continue
+            # A normal rank is only recognized in its own branch's server. A
+            # universal rank is recognized in every branch server that maps it.
+            belongs = branch is not None and candidate.key == branch.key
+            if belongs or rank.universal:
+                desired.update(candidate.discord_roles_for(rank.key))
+
+        added, suppressed = cfg.grant_adjustments(record.grants, guild_id)
+        desired = (desired - suppressed) | added
 
         return desired, managed
 
-    def target_guild_ids(self, record, cfg=None, all_guilds=False):
-        """Guilds this record has a presence in: main plus its branch server.
+    def target_guild_ids(self, record=None, cfg=None):
+        """Every guild a record is reconciled in: main plus ALL branch servers.
 
-        `all_guilds` widens it to every configured branch server. Used when
-        revoking access, where the record's *current* branch is not a reliable
-        guide to which servers still carry roles from an earlier branch.
+        Not just the member's own branch server. Where a member holds roles
+        depends on more than their current branch — a universal rank and a
+        branch-scoped grantable role both reach into other servers — and a
+        server that is skipped is a server where stale roles are never removed:
+        the old branch after a transfer, every branch server after a demotion
+        out of a universal rank, a revoked grantable role. Visiting a server the
+        member is not in costs a cache lookup; see _sync_guild.
         """
         cfg = cfg or roles_config.current()
         guilds = []
         if cfg.discord.main_guild_id:
             guilds.append((SyncTarget.DISCORD_MAIN, cfg.discord.main_guild_id))
-
-        if all_guilds:
-            for branch in cfg.branches.values():
-                if branch.discord_guild_id and branch.discord_guild_id != cfg.discord.main_guild_id:
-                    guilds.append((SyncTarget.DISCORD_BRANCH, branch.discord_guild_id))
-            return guilds
-
-        branch = cfg.branch(record.branch_key)
-        if branch and branch.discord_guild_id and branch.discord_guild_id != cfg.discord.main_guild_id:
-            guilds.append((SyncTarget.DISCORD_BRANCH, branch.discord_guild_id))
-
+        for guild_id in cfg.branch_guild_ids():
+            guilds.append((SyncTarget.DISCORD_BRANCH, guild_id))
         return guilds
 
     # ── Application ──
@@ -162,7 +172,7 @@ class DiscordSynchronizer:
                 "Discord client is not ready.", retryable=True,
             )]
 
-        for target, guild_id in self.target_guild_ids(record, cfg, all_guilds=strip):
+        for target, guild_id in self.target_guild_ids(record, cfg):
             outcomes.append(
                 await self._sync_guild(record, target, guild_id, cfg, dry_run, strip)
             )
@@ -185,6 +195,15 @@ class DiscordSynchronizer:
             )
 
         member = guild.get_member(record.discord_id)
+        if member is None and guild.chunked:
+            # The member cache is complete, so absence from it is the answer.
+            # Every sync visits every branch server, and most people are in one
+            # or two of them — this is what keeps that from costing a failed
+            # API lookup per server, per person.
+            return SyncOutcome(
+                target, True,
+                f"{record.discord_id} is not a member of {guild.name}; skipped.",
+            )
         if member is None:
             try:
                 member = await guild.fetch_member(record.discord_id)
@@ -346,11 +365,47 @@ class DiscordSynchronizer:
                     f"Branch {branch.key}: bot is not in guild {branch.discord_guild_id}."
                 )
                 continue
-            for rank_key, role_id in branch.discord_roles_by_rank.items():
+            for rank_key, role_ids in branch.discord_roles_by_rank.items():
+                if cfg.rank(rank_key) is None:
+                    problems.append(
+                        f"Branch {branch.key}: roles are mapped for {rank_key}, "
+                        f"which is not a configured rank."
+                    )
+                for role_id in role_ids:
+                    if guild.get_role(role_id) is None:
+                        problems.append(
+                            f"Branch {branch.key} / rank {rank_key}: role {role_id} "
+                            f"not found in {guild.name}."
+                        )
+
+        for grantable in cfg.grantable_roles.values():
+            guild_id = cfg.grantable_guild_id(grantable)
+            if not guild_id:
+                problems.append(
+                    f"Grantable role {grantable.key}: guild '{grantable.guild}' "
+                    f"does not resolve to a configured server."
+                )
+                continue
+            guild = self.client.get_guild(guild_id)
+            if guild is None:
+                problems.append(
+                    f"Grantable role {grantable.key}: bot is not in guild {guild_id}."
+                )
+                continue
+            for role_id in grantable.add_discord_role_ids + grantable.remove_discord_role_ids:
                 if guild.get_role(role_id) is None:
                     problems.append(
-                        f"Branch {branch.key} / rank {rank_key}: role {role_id} not "
-                        f"found in {guild.name}."
+                        f"Grantable role {grantable.key}: role {role_id} not found "
+                        f"in {guild.name}."
+                    )
+            # A cancelled role only has an effect if a rank or branch grants it.
+            foundation = cfg.managed_role_ids(guild_id)
+            for role_id in grantable.remove_discord_role_ids:
+                if role_id not in foundation:
+                    problems.append(
+                        f"Grantable role {grantable.key}: removes role {role_id}, "
+                        f"which no rank or branch grants in {guild.name} — it has "
+                        f"no effect."
                     )
 
         return problems

@@ -115,8 +115,9 @@ COL_TECH_LAST_SYNC_AT = 21   # U — ISO-8601 UTC
 COL_TECH_REVISION = 22       # V — monotonic counter, bumped on every system write
 COL_TECH_LOA = 23            # W — opaque LOA payload; format TBD (see loa.py)
 COL_TECH_SOURCE = 24         # X — SYSTEM / MANUAL, provenance of the last change
+COL_TECH_GRANTS = 25         # Y — grantable role keys held, comma-separated
 
-TECH_COL_END = 24  # X
+TECH_COL_END = 25  # Y
 
 TECH_HEADERS = {
     COL_TECH_DISCORD_ID: "DISCORD_ID",
@@ -128,9 +129,10 @@ TECH_HEADERS = {
     COL_TECH_REVISION: "REVISION",
     COL_TECH_LOA: "LOA",
     COL_TECH_SOURCE: "SOURCE",
+    COL_TECH_GRANTS: "GRANTS",
 }
 
-#: Every column the system reads in a poll cycle: A..X. Cheaper as one range.
+#: Every column the system reads in a poll cycle: A..Y. Cheaper as one range.
 READ_COL_START = 1
 READ_COL_END = TECH_COL_END
 
@@ -147,7 +149,7 @@ def col_letter(index):
 
 
 def a1_range(first_row, last_row, first_col=READ_COL_START, last_col=READ_COL_END):
-    """Build an A1 range string, e.g. 'A10:X112'."""
+    """Build an A1 range string, e.g. 'A10:Y112'."""
     return f"{col_letter(first_col)}{first_row}:{col_letter(last_col)}{last_row}"
 
 

@@ -92,6 +92,18 @@ async def branch_autocomplete(interaction, current):
     ][:25]
 
 
+async def grantable_autocomplete(interaction, current):
+    cfg = roles_config.current()
+    needle = (current or "").casefold()
+    return [
+        app_commands.Choice(
+            name=f"{g.display} — {cfg.grantable_guild_label(g)}"[:100], value=g.key,
+        )
+        for g in cfg.grantable_roles.values()
+        if needle in g.display.casefold() or needle in g.key.casefold()
+    ][:25]
+
+
 async def timezone_autocomplete(interaction, current):
     result = timezones.normalize(current or "")
     if result.ok:
@@ -114,6 +126,9 @@ def register_commands(tree):
     )
     roles_group = app_commands.Group(
         name="aria", description="Role management administration"
+    )
+    grant_group = app_commands.Group(
+        name="grant", description="Give or revoke grantable roles (role modifiers)"
     )
 
     # ── /register ──
@@ -248,6 +263,44 @@ def register_commands(tree):
         )
         await _respond(interaction, result)
 
+    # ── /grant add ──
+
+    @grant_group.command(
+        name="add",
+        description="Give a user a grantable role on top of their rank",
+    )
+    @app_commands.describe(user="The user to modify", role="The grantable role to give")
+    @app_commands.autocomplete(role=grantable_autocomplete)
+    async def grant_add_command(
+        interaction: discord.Interaction,
+        user: discord.Member,
+        role: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        result = await service.grant_role(
+            context_from(interaction), grantable_input=role, target_discord_id=user.id,
+        )
+        await _respond(interaction, result)
+
+    # ── /grant remove ──
+
+    @grant_group.command(
+        name="remove",
+        description="Revoke a grantable role from a user",
+    )
+    @app_commands.describe(user="The user to modify", role="The grantable role to revoke")
+    @app_commands.autocomplete(role=grantable_autocomplete)
+    async def grant_remove_command(
+        interaction: discord.Interaction,
+        user: discord.Member,
+        role: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        result = await service.revoke_role(
+            context_from(interaction), grantable_input=role, target_discord_id=user.id,
+        )
+        await _respond(interaction, result)
+
     # ── /roles whois ──
 
     @roles_group.command(name="whois", description="Show a PERSONNEL record")
@@ -328,7 +381,8 @@ def register_commands(tree):
         missing = cfg.missing_configuration()
         summary = (
             f"Configuration reloaded: **{len(cfg.ranks)}** rank(s), "
-            f"**{len(cfg.branches)}** branch(es)."
+            f"**{len(cfg.branches)}** branch(es), "
+            f"**{len(cfg.grantable_roles)}** grantable role(s)."
         )
         if missing:
             summary += "\n\n**Still missing:**\n" + "\n".join(f"• {m}" for m in missing)
@@ -344,6 +398,7 @@ def register_commands(tree):
 
     tree.add_command(set_group)
     tree.add_command(roles_group)
+    tree.add_command(grant_group)
 
-    print("[Roles] Slash commands registered: /register, /set …, /roles …")
+    print("[Roles] Slash commands registered: /register, /set …, /grant …, /aria …")
     return tree

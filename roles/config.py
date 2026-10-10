@@ -17,6 +17,7 @@ Call ``reload()`` to pick up edits without restarting the process.
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 from config import config as app_config
@@ -97,6 +98,12 @@ class RankDef:
     #: Additional MAIN-SERVER-ONLY roles granted by this rank, on top of the
     #: primary one above. Auxiliary roles are never applied in branch servers.
     main_aux_discord_role_ids: list = field(default_factory=list)
+    #: True for ranks whose authority is not tied to one branch (Executive Team,
+    #: CEO). A universal rank receives its branch-server roles in EVERY branch
+    #: server that maps the rank, whatever the member's own branch is. A normal
+    #: rank only receives them in the server of the branch it belongs to.
+    #: Discord only — Roblox branch roles still follow the member's own branch.
+    universal: bool = False
     #: Roblox group roles for this rank, keyed by branch key, as RobloxRoleRef.
     #: {"N/A": <ref>, "BRANCH_KEY": <ref>}
     #:
@@ -135,7 +142,7 @@ class BranchDef:
     #: Discord server ID for this branch's own server.
     discord_guild_id: "int | None" = None
     #: Branch-specific Discord role IDs, keyed by rank key:
-    #: {"RANK_KEY": <role_id>}. Applied inside `discord_guild_id`.
+    #: {"RANK_KEY": [<role_id>, ...]}. Applied inside `discord_guild_id`.
     discord_roles_by_rank: dict = field(default_factory=dict)
     #: MAIN-SERVER-ONLY roles granted by belonging to this branch — the branch
     #: half of the auxiliary role mapping. These live in the main server, not in
@@ -150,13 +157,48 @@ class BranchDef:
     is_na: bool = False
     extra: dict = field(default_factory=dict)
 
-    def discord_role_for(self, rank_key):
-        return self.discord_roles_by_rank.get((rank_key or "").upper())
+    def discord_roles_for(self, rank_key):
+        """Role IDs this branch's server grants to one rank. Empty if unmapped."""
+        return list(self.discord_roles_by_rank.get((rank_key or "").upper(), ()))
 
 
 #: Key used for the explicit "no branch" configuration entry.
 NA_BRANCH_KEY = "N/A"
 
+#: `GrantableRoleDef.guild` value meaning "the main server" rather than a branch.
+MAIN_GUILD_SCOPE = "MAIN"
+
+
+# ── Grantable roles ──────────────────────────────────────────────────────────
+
+@dataclass
+class GrantableRoleDef:
+    """A role modifier a member can hold ON TOP of their rank.
+
+    Not a rank: holding one never changes column F, the member's category, their
+    place on the sheet or their standing in the permission system. It only
+    adjusts which Discord roles they carry in ONE server.
+
+    Granted and revoked with /grant by anyone who may use SET_RANK on the
+    member, and stored on the member's record, so it survives rank and branch
+    changes until it is revoked.
+    """
+
+    #: Stable internal key. Stored in the record's technical GRANTS column.
+    key: str
+    display: str = ""
+    description: str = ""
+    #: Which server this applies in: MAIN_GUILD_SCOPE or a branch key. A branch
+    #: scope means that branch's own server, and does not require the member to
+    #: belong to the branch.
+    guild: str = MAIN_GUILD_SCOPE
+    #: Roles added on top of what the rank and branch already give.
+    add_discord_role_ids: list = field(default_factory=list)
+    #: Roles the rank or branch would otherwise give that this modifier cancels.
+    #: Only ever subtracts from the foundational roles — a role the member holds
+    #: for an unrelated, unmanaged reason is not touched.
+    remove_discord_role_ids: list = field(default_factory=list)
+    extra: dict = field(default_factory=dict)
 
 # ── Discord server configuration ─────────────────────────────────────────────
 
@@ -405,6 +447,7 @@ class SyncConfig:
 class RolesConfig:
     ranks: dict = field(default_factory=dict)        # key -> RankDef
     branches: dict = field(default_factory=dict)     # key -> BranchDef
+    grantable_roles: dict = field(default_factory=dict)  # key -> GrantableRoleDef
     #: Rank key assigned by /register. None = leave the new record's rank blank
     #: rather than guess. A blank rank sorts to the bottom of its section and
     #: synchronizes nothing, which is the safe state until this is supplied.
@@ -456,6 +499,67 @@ class RolesConfig:
             if branch.key.casefold() == needle:
                 return branch
         return None
+
+    # ── Grantable roles ──
+
+    def grantable(self, key):
+        if not key:
+            return None
+        return self.grantable_roles.get(str(key).strip().upper())
+
+    def grantable_by_display(self, display):
+        if not display:
+            return None
+        needle = str(display).strip().casefold()
+        for grantable in self.grantable_roles.values():
+            if grantable.display.strip().casefold() == needle:
+                return grantable
+            if grantable.key.casefold() == needle:
+                return grantable
+        return None
+
+    def grantable_guild_id(self, grantable):
+        """The server a grantable role applies in, or None if it is not
+        resolvable yet (unknown branch, or a server ID that is not supplied)."""
+        if grantable.guild == MAIN_GUILD_SCOPE:
+            return self.discord.main_guild_id
+        branch = self.branches.get(grantable.guild)
+        return branch.discord_guild_id if branch else None
+
+    def grantable_guild_label(self, grantable):
+        """'the main server' / 'the ECHELON server', for messages."""
+        if grantable.guild == MAIN_GUILD_SCOPE:
+            return "the main server"
+        branch = self.branches.get(grantable.guild)
+        return f"the {branch.display if branch else grantable.guild} server"
+
+    def grant_adjustments(self, grant_keys, guild_id):
+        """What a member's held grantable roles change in one server.
+
+        Returns (added_ids, suppressed_ids). Keys that are not configured are
+        ignored rather than guessed at, the same way an unknown rank is.
+        """
+        added, suppressed = set(), set()
+        for key in grant_keys or ():
+            grantable = self.grantable(key)
+            if grantable is None or not guild_id:
+                continue
+            if self.grantable_guild_id(grantable) != guild_id:
+                continue
+            added.update(grantable.add_discord_role_ids)
+            suppressed.update(grantable.remove_discord_role_ids)
+        return added, suppressed
+
+    # ── Discord server resolution ──
+
+    def branch_guild_ids(self):
+        """Every distinct branch server, excluding the main one. Config order."""
+        guild_ids = []
+        for branch in self.branches.values():
+            guild_id = branch.discord_guild_id
+            if guild_id and guild_id != self.discord.main_guild_id and guild_id not in guild_ids:
+                guild_ids.append(guild_id)
+        return guild_ids
 
     # ── Roblox role resolution ──
 
@@ -554,7 +658,12 @@ class RolesConfig:
 
         Roles outside this set are never added or removed, so manually assigned
         cosmetic roles survive synchronization. Auxiliary roles are included so
-        that obsolete ones are cleaned up when a rank or branch changes.
+        that obsolete ones are cleaned up when a rank or branch changes, and so
+        are the roles a grantable role ADDS, so they come off when it is revoked.
+
+        A grantable role's `remove_discord_role_ids` are deliberately NOT
+        included: they only cancel roles that are already managed. Owning them
+        here would strip that role from every member who merely holds it.
         """
         managed = set(self.discord.extra_managed_role_ids)
 
@@ -569,9 +678,13 @@ class RolesConfig:
 
         for branch in self.branches.values():
             if branch.discord_guild_id and branch.discord_guild_id == guild_id:
-                managed.update(
-                    role_id for role_id in branch.discord_roles_by_rank.values() if role_id
-                )
+                for role_ids in branch.discord_roles_by_rank.values():
+                    managed.update(role_ids)
+
+        if guild_id:
+            for grantable in self.grantable_roles.values():
+                if self.grantable_guild_id(grantable) == guild_id:
+                    managed.update(grantable.add_discord_role_ids)
 
         return managed
 
@@ -627,19 +740,26 @@ def _as_int(value):
         return None
 
 
-def _int_map(raw):
-    """{"KEY": 123} with placeholders dropped rather than coerced to 0."""
-    result = {}
-    for key, value in (raw or {}).items():
-        parsed = _as_int(value)
-        if parsed is not None:
-            result[str(key).strip().upper()] = parsed
-    return result
-
-
 def _int_list(raw):
     """[123, null, 456] -> [123, 456]. Placeholders are dropped, not zeroed."""
     return [i for i in (_as_int(x) for x in (raw or [])) if i is not None]
+
+
+def _int_list_map(raw):
+    """{"KEY": [1, 2]} or {"KEY": 1} -> {"KEY": [1, 2]}.
+
+    A single ID is accepted as a one-element list. "_comment" keys and entries
+    with no usable ID are dropped.
+    """
+    result = {}
+    for key, value in (raw or {}).items():
+        key = str(key).strip().upper()
+        if key.startswith("_"):
+            continue
+        ids = _int_list(value if isinstance(value, (list, tuple)) else [value])
+        if ids:
+            result[key] = ids
+    return result
 
 
 def _roblox_role_map(raw):
@@ -686,6 +806,7 @@ def _build_rank(key, raw):
         special_group_order=int(raw.get("special_group_order", 0)),
         main_discord_role_id=_as_int(raw.get("main_discord_role_id")),
         main_aux_discord_role_ids=_int_list(raw.get("main_aux_discord_role_ids")),
+        universal=bool(raw.get("universal", False)),
         roblox_roles_by_branch=_roblox_role_map(raw.get("roblox_roles_by_branch")),
         # Special ranks are not necessarily tied to a Roblox group role, so they
         # must opt in explicitly before Roblox is ever touched for them.
@@ -700,7 +821,7 @@ def _build_branch(key, raw):
         key=key,
         display=raw.get("display", key),
         discord_guild_id=_as_int(raw.get("discord_guild_id")),
-        discord_roles_by_rank=_int_map(raw.get("discord_roles_by_rank")),
+        discord_roles_by_rank=_int_list_map(raw.get("discord_roles_by_rank")),
         main_aux_discord_role_ids=_int_list(raw.get("main_aux_discord_role_ids")),
         roblox_group_id=_as_int(raw.get("roblox_group_id")),
         is_na=bool(raw.get("is_na", key == NA_BRANCH_KEY)),
@@ -708,10 +829,60 @@ def _build_branch(key, raw):
     )
 
 
+#: Grantable role keys are stored comma-separated in one sheet cell, so a key
+#: must not contain a comma, and must start with a letter so the cell can never
+#: be read back by Sheets as a number or a formula.
+_GRANTABLE_KEY = re.compile(r"^[A-Z][A-Z0-9 _&./\-]*$")
+
+
+def _build_grantable(key, raw, branches):
+    """Build one GrantableRoleDef, or None if the entry is unusable."""
+    key = str(key).strip().upper()
+    if not _GRANTABLE_KEY.match(key):
+        print(f"[Roles] Grantable role {key!r} skipped: a key must start with a "
+              f"letter and may only contain letters, digits, spaces and _ & . / -")
+        return None
+
+    guild = str(raw.get("guild") or MAIN_GUILD_SCOPE).strip().upper()
+    if guild != MAIN_GUILD_SCOPE:
+        branch = branches.get(guild)
+        if branch is None or branch.is_na:
+            print(f"[Roles] Grantable role {key}: guild {guild!r} is neither "
+                  f"{MAIN_GUILD_SCOPE} nor a configured branch. It stays inert "
+                  f"until that is fixed.")
+
+    added = _int_list(raw.get("add_discord_role_ids"))
+    removed = _int_list(raw.get("remove_discord_role_ids"))
+    overlap = sorted(set(added) & set(removed))
+    if overlap:
+        print(f"[Roles] Grantable role {key}: {overlap} listed under both add and "
+              f"remove. Add wins; the role will be granted.")
+
+    return GrantableRoleDef(
+        key=key,
+        display=raw.get("display", key),
+        description=raw.get("description", ""),
+        guild=guild,
+        add_discord_role_ids=added,
+        remove_discord_role_ids=removed,
+        extra=raw.get("extra", {}) or {},
+    )
+
+
 def _build_grant(raw):
+    relations = [str(r).strip().upper() for r in raw.get("allowed_relations", [])]
+    min_rank_order = _as_int(raw.get("min_rank_order"))
+
+    # A floor that was written but cannot be read must not quietly become "no
+    # floor" — that widens the grant to every rank. Disable the grant instead.
+    if raw.get("min_rank_order") is not None and min_rank_order is None:
+        print(f"[Roles] Permission grant ignored: min_rank_order "
+              f"{raw.get('min_rank_order')!r} is not a number.")
+        relations = []
+
     return PermissionGrant(
-        allowed_relations=[str(r).strip().upper() for r in raw.get("allowed_relations", [])],
-        min_rank_order=_as_int(raw.get("min_rank_order")),
+        allowed_relations=relations,
+        min_rank_order=min_rank_order,
         allowed_categories=[
             c for c in (Category.parse(x) for x in raw.get("allowed_categories", [])) if c
         ],
@@ -796,6 +967,13 @@ def load(path=None):
     if cfg.branches and NA_BRANCH_KEY not in cfg.branches:
         cfg.branches[NA_BRANCH_KEY] = BranchDef(key=NA_BRANCH_KEY, display="N/A", is_na=True)
 
+    for key, grantable_raw in (raw.get("grantable_roles") or {}).items():
+        if str(key).startswith("_") or not isinstance(grantable_raw, dict):
+            continue
+        grantable = _build_grantable(key, grantable_raw, cfg.branches)
+        if grantable is not None:
+            cfg.grantable_roles[grantable.key] = grantable
+
     default_rank = raw.get("default_registration_rank")
     if default_rank and not str(default_rank).startswith("_"):
         cfg.default_registration_rank = str(default_rank).strip().upper()
@@ -832,7 +1010,8 @@ def load(path=None):
 
     print(
         f"[Roles] Config loaded from {path}: "
-        f"{len(cfg.ranks)} rank(s), {len(cfg.branches)} branch(es)."
+        f"{len(cfg.ranks)} rank(s), {len(cfg.branches)} branch(es), "
+        f"{len(cfg.grantable_roles)} grantable role(s)."
     )
     return cfg
 
