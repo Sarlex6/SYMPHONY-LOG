@@ -132,6 +132,9 @@ class SyncQueue:
 
         self._queue = asyncio.Queue()
         self._pending_uids = set()
+        #: record_uid -> the ordinary (non-removal) job currently sitting in the
+        #: queue for it, so a later change can be folded into that job.
+        self._waiting_jobs = {}
         self._dead_letters = []
         self._pending_removals = {}   # record_uid -> serialized removal job
         self._worker_task = None
@@ -153,10 +156,21 @@ class SyncQueue:
             return None
 
         if record.record_uid in self._pending_uids:
+            # Collapsing is only safe if the job that is already waiting will
+            # still run. It carries the revision it was created at, and the
+            # staleness guard drops any job older than the record — so without
+            # this, a second change made while the first was still queued got
+            # neither its own job nor the first one.
+            waiting = self._waiting_jobs.get(record.record_uid)
+            if waiting is not None:
+                waiting.revision = max(waiting.revision, record.revision)
+                if waiting.targets is not None and (targets is None or set(targets) - set(waiting.targets)):
+                    waiting.targets = None  # the newer change needs every target
             return None
 
         job = SyncJob(record.record_uid, record.revision, reason, targets=targets)
         self._pending_uids.add(record.record_uid)
+        self._waiting_jobs[record.record_uid] = job
         self._queue.put_nowait(job)
         return job
 
@@ -213,6 +227,8 @@ class SyncQueue:
             try:
                 job = await self._queue.get()
                 self._pending_uids.discard(job.record_uid)
+                if self._waiting_jobs.get(job.record_uid) is job:
+                    del self._waiting_jobs[job.record_uid]
                 await self._process(job)
             except asyncio.CancelledError:
                 raise
@@ -326,6 +342,10 @@ class SyncQueue:
         try:
             await asyncio.sleep(delay)
             self._pending_uids.add(job.record_uid)
+            if not job.removal:
+                # Unless a newer job arrived during the wait; then that one is
+                # the job later changes fold into, and this retry is stale.
+                self._waiting_jobs.setdefault(job.record_uid, job)
             await self._queue.put(job)
         except asyncio.CancelledError:
             pass

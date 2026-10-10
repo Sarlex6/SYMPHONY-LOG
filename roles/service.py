@@ -282,9 +282,9 @@ class RoleManagerService:
         where = f" ({url})" if url else ""
         return (
             f":warning: You are not in our Roblox group yet, so you have been "
-            f"registered as an applicant. **Join the group**{where} and ask a "
-            f"staff member to re-check your registration to receive a proper rank "
-            f"and the access that comes with it."
+            f"registered as an applicant. **Join the group**{where} — once you "
+            f"have been accepted you will be moved up automatically and receive "
+            f"the access that comes with it. There is no need to register again."
         )
 
     async def _create_record(self, context, roblox_id, roblox_username, discord_username):
@@ -345,6 +345,49 @@ class RoleManagerService:
             roblox_id=roblox_id,
             in_roblox_group=in_group,
         )
+
+    async def promote_group_joiners(self, record_uids):
+        """Move applicants who are now in the Roblox group up to the in-group rank.
+
+        The second half of the registration rule. /register hands out
+        `in_group_rank` to someone already in the group and the applicant rank
+        to everyone else; this is what happens when one of those applicants is
+        accepted afterwards, so the outcome no longer depends on whether they
+        joined the group before or after registering.
+
+        A system action — there is no actor and no permission check, for the
+        same reason /register itself needs no rank to assign one. Its reach is
+        correspondingly narrow: it only ever moves a record that STILL holds
+        the applicant rank, and only to the one configured rank.
+
+        Caller must hold `gateway.write_lock` and have refreshed the snapshot
+        under that same hold (see PersonnelRepository.update_usernames for why
+        this does not reload by itself). Returns the promoted records.
+        """
+        cfg = roles_config.current()
+        pair = cfg.applicant_promotion()
+        if pair is None:
+            return []
+        applicant, joined = pair
+
+        promoted = []
+        for uid in record_uids:
+            current = self.repository.by_uid(uid)
+            # Re-checked against current state: the membership answer is a few
+            # seconds old, and a staff member may have ranked them meanwhile.
+            if current is None or current.rank_key != applicant.key:
+                continue
+
+            saved = await self.repository.save_record(current.with_changes(
+                rank_key=joined.key,
+                category=joined.category or current.category,
+            ))
+            self.sync_queue.enqueue(saved, reason="joined the Roblox group")
+            promoted.append(saved)
+            print(f"[Roles] {saved.username or saved.discord_id} joined the Roblox "
+                  f"group: {applicant.key} -> {joined.key} (rev {saved.revision}).")
+
+        return promoted
 
     # ── Field mutations ──
 

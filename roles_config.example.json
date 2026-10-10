@@ -418,7 +418,11 @@
     "until Roblox approves it for public mode. Submit it for review before rollout."
   ],
   "registration": {
-    "verification_method": "OAUTH"
+    "verification_method": "OAUTH",
+    "_in_group_rank_comment": "Rank when the registrant is ALREADY in the Roblox group. Not in the group -> default_registration_rank, plus a prompt to join. null skips the check.",
+    "in_group_rank": "TRAINING_ASSOCIATE",
+    "_applicant_check_minutes_comment": "How often members still on default_registration_rank are re-checked against the Roblox group. One who has been accepted is moved up to in_group_rank automatically. 0 turns it off.",
+    "applicant_check_minutes": 10
   },
 
   "roblox_oauth": {

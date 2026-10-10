@@ -779,7 +779,7 @@
       "SET_RANK": {
         "min_rank_order": null,
         "grants": [
-          { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] },
+          { "allowed_relations": ["LOWER"], "allowed_categories": ["MID-RANK"], "min_rank_order": 7  },
           { "allowed_relations": ["SELF"], "min_rank_order": 14 }
         ],
         "note": "high ranks only. Supply allowed_relations (likely LOWER) and a min_rank_order."

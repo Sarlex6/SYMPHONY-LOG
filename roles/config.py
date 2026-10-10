@@ -284,6 +284,13 @@ class RegistrationConfig:
     #: the default rank.
     in_group_rank: "str | None" = None
 
+    #: How often members still holding `default_registration_rank` are re-checked
+    #: against the Roblox group, in minutes. One who has been accepted since
+    #: registering is moved up to `in_group_rank` automatically, exactly as if
+    #: they had been in the group when they registered. Needs `in_group_rank`;
+    #: 0 turns the check off.
+    applicant_check_minutes: int = 10
+
 
 # ── Permission configuration ─────────────────────────────────────────────────
 
@@ -600,6 +607,22 @@ class RolesConfig:
             if guild_id and guild_id != self.discord.main_guild_id and guild_id not in guild_ids:
                 guild_ids.append(guild_id)
         return guild_ids
+
+    # ── Registration ranks ──
+
+    def applicant_promotion(self):
+        """(applicant_rank, in_group_rank) when joining the Roblox group should
+        move a member from the first to the second, else None.
+
+        None covers every way the pair can be unusable — either rank missing
+        from the configuration, or both naming the same rank — so callers have
+        one thing to check.
+        """
+        applicant = self.rank(self.default_registration_rank)
+        joined = self.rank(self.registration.in_group_rank)
+        if applicant is None or joined is None or applicant.key == joined.key:
+            return None
+        return applicant, joined
 
     # ── Roblox role resolution ──
 

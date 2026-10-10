@@ -53,6 +53,12 @@ class SheetPoller:
         self._username_task = None
         self._username_lookup_at = None
 
+        #: Record UIDs of applicants found to be in the Roblox group, waiting
+        #: to be promoted at the next poll. See _start_applicant_check.
+        self._pending_promotions = []
+        self._applicant_task = None
+        self._applicant_check_at = None
+
     # ── Loop ──
 
     async def run(self, bot=None):
@@ -102,9 +108,11 @@ class SheetPoller:
             # The snapshot is fresh and the lock is held: the one moment a
             # looked-up name can be written to a row number known to be current.
             await self._apply_usernames()
+            await self._apply_promotions()
 
         self._last_poll_at = datetime.utcnow()
         self._start_username_lookup(cfg)
+        self._start_applicant_check(cfg)
 
         if not changes:
             await self._maybe_resync_drift(cfg)
@@ -229,6 +237,82 @@ class SheetPoller:
         except Exception as exc:
             # Left as not-completed, so the next cycle tries again.
             print(f"[Roles:Poll] Restructure failed: {type(exc).__name__}: {exc}")
+
+    # ── Applicants who have joined the Roblox group ──
+
+    def _start_applicant_check(self, cfg):
+        """Kick off a background group-membership check when one is due.
+
+        Same two-step shape as the username pass, for the same reasons: the
+        check is one Roblox call per applicant, so it runs as its own task, and
+        what it finds is only acted on by _apply_promotions at a later poll.
+        """
+        minutes = cfg.registration.applicant_check_minutes
+        if not minutes or minutes <= 0 or cfg.applicant_promotion() is None:
+            return
+        if self._applicant_task is not None and not self._applicant_task.done():
+            return
+
+        now = time.monotonic()
+        if self._applicant_check_at is not None and now - self._applicant_check_at < minutes * 60:
+            return
+
+        self._applicant_check_at = now
+        self._applicant_task = asyncio.get_event_loop().create_task(
+            self._check_applicants(cfg)
+        )
+
+    async def _check_applicants(self, cfg):
+        from roles.roblox_sync import synchronizer as roblox_synchronizer
+
+        pair = cfg.applicant_promotion()
+        if pair is None:
+            return
+        applicant, _joined = pair
+
+        waiting = [
+            r for r in self.repository.live_records()
+            if r.rank_key == applicant.key and r.roblox_id and not r.is_incomplete()
+        ]
+
+        joined = []
+        for record in waiting:
+            try:
+                in_group = await roblox_synchronizer.is_group_member(record.roblox_id, cfg)
+            except Exception as exc:
+                print(f"[Roles:Poll] Group check failed: {type(exc).__name__}: {exc}")
+                in_group = None
+
+            if in_group is None:
+                # Could not be checked — no key, or Roblox is unhappy. Unknown is
+                # not "joined", and asking about everyone else right now would
+                # get the same non-answer. The next pass starts over.
+                break
+            if in_group:
+                joined.append(record.record_uid)
+
+            if cfg.roblox.request_delay:
+                await asyncio.sleep(cfg.roblox.request_delay)
+
+        if joined:
+            self._pending_promotions = joined
+
+    async def _apply_promotions(self):
+        """Promote applicants found in the group. Caller holds the write lock,
+        post-refresh."""
+        uids, self._pending_promotions = self._pending_promotions, []
+        if not uids:
+            return
+
+        try:
+            promoted = await self.service.promote_group_joiners(uids)
+        except Exception as exc:
+            # Nothing is lost: they are still applicants, so the next check
+            # finds them again.
+            print(f"[Roles:Poll] Could not promote applicants: {type(exc).__name__}: {exc}")
+            return
+
+        self._stats["promotions"] = self._stats.get("promotions", 0) + len(promoted)
 
     # ── Usernames (column D) ──
 

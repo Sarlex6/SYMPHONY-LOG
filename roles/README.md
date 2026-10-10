@@ -281,6 +281,31 @@ user owns a Roblox account:
 Either way, verification happens **once**. The Discord ID and Roblox ID land in
 the technical columns and are canonical from then on.
 
+### Starting rank, and applicants who join later
+
+The starting rank depends on Roblox group membership at the moment of
+registration:
+
+| Registrant is… | Rank |
+|---|---|
+| already in the group | `registration.in_group_rank` |
+| not in the group | `default_registration_rank`, plus a prompt to join |
+| unknown (API outage, no key) | `default_registration_rank` — an outage never hands out the higher rank |
+
+So that the outcome does not depend on *when* someone joined, the poller
+re-checks everyone still holding `default_registration_rank` every
+`registration.applicant_check_minutes` (default 10; `0` disables it) and moves
+those who are now members up to `in_group_rank`. The check runs in the
+background, one Roblox call per applicant, and the promotion is written at the
+start of the following poll, then synchronized like any rank change.
+
+It is deliberately narrow: it only ever moves a record that *still* holds the
+applicant rank, only to the one configured rank, and it never demotes — leaving
+the group changes nothing. This is the one place besides `/register` where
+something read from Roblox is written to the sheet. A consequence worth knowing:
+setting someone who is in the group back to the applicant rank by hand does not
+stick, because the next check promotes them again.
+
 ### The OAuth flow
 
 ```
