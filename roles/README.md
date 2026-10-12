@@ -65,7 +65,7 @@ Managed area starts at **row 10**. Nothing at or above row 9 is ever written.
 | A, B, I, M | design | never written — not in `WRITABLE_COLUMNS` |
 | C | CATEGORY | written; derived from the rank's configured category |
 | D | IDENTIFICATION | written; `RobloxName (discordname)`, display only — the Discord half is re-checked every `sync.username_refresh_minutes` |
-| E | TIMEZONE | written; canonical IANA identifier |
+| E | TIMEZONE | written; canonical UTC offset (`UTC+1`) |
 | F | RANK | written as the configured *display* string; dropdown managed |
 | G | BRANCH | written as the configured *display* string; dropdown managed |
 | H | NOTES | **never authored** — carried with the record when rows move |
@@ -106,12 +106,11 @@ each is a one-line change if you want it different.
    technical column X records `MANUAL`. Manual edits remain fully authoritative;
    authority is never read from L.
 
-3. **Timezone canonical format = IANA identifier** (`Europe/Prague`).
-   Chosen over free text and over UTC offsets: unambiguous (`CST` is three
-   different zones), survives daylight saving, and validates against stdlib
-   `zoneinfo`. `normalize()` accepts abbreviations and offsets and resolves them;
-   genuinely ambiguous input returns candidates for the user to pick rather than
-   a guess.
+3. **Timezone canonical format = UTC offset** (`UTC`, `UTC+1`, `UTC-5`,
+   `UTC+5:30`). Chosen over place names: a member states how far they are from
+   UTC, not where they live. `normalize()` accepts the common spellings (`+2`,
+   `utc +02:00`, `GMT-5`) between UTC-12 and UTC+14. An offset does not follow
+   daylight saving, so a member whose clock changes has to set it again.
 
 4. **Permissions fail closed.** Any permission without a configured rule is
    denied, and the denial says which rule is missing.

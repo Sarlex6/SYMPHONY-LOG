@@ -39,7 +39,7 @@ ACTION_SPECS = {
     },
     "set_timezone": {
         "description": "Set a timezone. Omit 'user' to mean the requester.",
-        "args": {"timezone": "IANA identifier, e.g. Europe/Prague", "user": "optional Discord user ID"},
+        "args": {"timezone": "UTC offset, e.g. UTC+1, UTC-5 or UTC+5:30", "user": "optional Discord user ID"},
         "self_only": False,
     },
     "set_rank": {

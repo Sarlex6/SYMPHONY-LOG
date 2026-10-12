@@ -469,6 +469,9 @@ class RolesConfig:
     #: rather than guess. A blank rank sorts to the bottom of its section and
     #: synchronizes nothing, which is the safe state until this is supplied.
     default_registration_rank: "str | None" = None
+    #: Branch key assigned by /register. None, or a key that is not a configured
+    #: branch, falls back to N/A. See registration_branch_key().
+    default_registration_branch: "str | None" = None
     #: Sheet section order, top to bottom.
     category_order: list = field(default_factory=lambda: [
         Category.HIGH_RANK, Category.MID_RANK, Category.LOW_RANK,
@@ -623,6 +626,12 @@ class RolesConfig:
         if applicant is None or joined is None or applicant.key == joined.key:
             return None
         return applicant, joined
+
+    def registration_branch_key(self):
+        """Branch key a new record starts in: `default_registration_branch` when
+        it names a configured branch, else N/A."""
+        key = str(self.default_registration_branch or "").strip().upper()
+        return key if key in self.branches else NA_BRANCH_KEY
 
     # ── Roblox role resolution ──
 
@@ -1052,6 +1061,14 @@ def load(path=None):
     default_rank = raw.get("default_registration_rank")
     if default_rank and not str(default_rank).startswith("_"):
         cfg.default_registration_rank = str(default_rank).strip().upper()
+
+    default_branch = raw.get("default_registration_branch")
+    if default_branch and not str(default_branch).startswith("_"):
+        cfg.default_registration_branch = str(default_branch).strip().upper()
+        if cfg.default_registration_branch not in cfg.branches:
+            print(f"[Roles] default_registration_branch "
+                  f"'{cfg.default_registration_branch}' is not a configured branch; "
+                  f"new records will start in {NA_BRANCH_KEY}.")
 
     order = [Category.parse(c) for c in (raw.get("category_order") or [])]
     order = [c for c in order if c]

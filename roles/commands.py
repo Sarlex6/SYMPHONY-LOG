@@ -105,14 +105,7 @@ async def grantable_autocomplete(interaction, current):
 
 
 async def timezone_autocomplete(interaction, current):
-    result = timezones.normalize(current or "")
-    if result.ok:
-        options = [result.canonical]
-    elif result.candidates:
-        options = result.candidates
-    else:
-        options = ["UTC", "Europe/London", "America/New_York", "America/Los_Angeles",
-                   "Europe/Prague", "Asia/Tokyo", "Australia/Sydney"]
+    options = timezones.suggestions(current or "")
     return [app_commands.Choice(name=o[:100], value=o) for o in options[:25]]
 
 
@@ -169,7 +162,7 @@ def register_commands(tree):
 
     @set_group.command(name="timezone", description="Set your timezone")
     @app_commands.describe(
-        timezone="An IANA timezone such as Europe/Prague or America/New_York",
+        timezone="Your UTC offset, such as UTC+1, UTC-5 or UTC+5:30",
         user="Whose timezone to set (requires authorization; defaults to yourself)",
     )
     @app_commands.autocomplete(timezone=timezone_autocomplete)

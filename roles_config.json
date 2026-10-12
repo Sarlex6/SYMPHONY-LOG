@@ -675,6 +675,12 @@
   ],
   "default_registration_rank": "APPLICANT",
 
+  "_default_registration_branch_README": [
+    "Branch key given to a new record by /register. Must be a key under \"branches\".",
+    "null, or a key that is not configured, starts new records in N/A."
+  ],
+  "default_registration_branch": "MEDICAL",
+
   "discord": {
     "_comment": "main_guild_id is the designated server where /register is used.",
     "main_guild_id": 1246219094521548810,

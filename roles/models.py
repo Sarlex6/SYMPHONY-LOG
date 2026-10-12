@@ -138,7 +138,7 @@ class UserRecord:
     # ── Human-facing columns ──
     category: "Category | None" = None
     username: str = ""                  # column D, "Roblox (discord)", display only
-    timezone: str = ""                  # column E, canonical IANA identifier
+    timezone: str = ""                  # column E, canonical UTC offset
     rank_key: str = ""                  # column F, key into RankRegistry
     branch_key: str = ""                # column G, key into BranchRegistry
     notes: str = ""                     # column H, carried but never authored

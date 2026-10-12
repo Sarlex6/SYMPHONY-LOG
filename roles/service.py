@@ -311,7 +311,7 @@ class RoleManagerService:
             entry_date=format_entry_date(),
             status=Status.ACTIVE,
             rank_key=rank_key,
-            branch_key=roles_config.NA_BRANCH_KEY,
+            branch_key=cfg.registration_branch_key(),
             sync_status=SyncStatus.NEVER,
             source=ChangeSource.SYSTEM,
         )
@@ -392,7 +392,7 @@ class RoleManagerService:
     # ── Field mutations ──
 
     async def set_timezone(self, context, raw_timezone, target_discord_id=None):
-        """Set column E to a canonical IANA identifier."""
+        """Set column E to a canonical UTC offset."""
         target_id = target_discord_id or context.actor_discord_id
 
         allowed, target, denial = self._authorize(
@@ -402,12 +402,6 @@ class RoleManagerService:
             return denial
 
         result = timezones.normalize(raw_timezone)
-        if result.ambiguous:
-            options = ", ".join(f"`{c}`" for c in result.candidates)
-            return ActionResult.invalid(
-                f"`{raw_timezone}` is ambiguous. Did you mean one of: {options}?",
-                candidates=result.candidates,
-            )
         if not result.ok:
             return ActionResult.invalid(result.error)
 
