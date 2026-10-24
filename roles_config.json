@@ -343,7 +343,7 @@
       "main_aux_discord_role_ids": [1360741001781575931, 1374133287953498172, 1378284454321192960, 1372890578840457357, 1372346058214080545, 1372346049255178301, 1360740870634209550],
       "syncs_roblox": true,
       "roblox_roles_by_branch": {
-        "N/A": 108616203,
+        "N/A": 381902001,
         "ECHELON": 698685092,
         "INTELLIGENCE": 699867076,
         "MEDICAL": 688411140,
@@ -663,7 +663,80 @@
       "guild" : ["R&D", "CONTINGENCY", "INTELLIGENCE", "ECHELON"],
       "add_discord_role_ids": [1482547363514945619, 1491869649611133069, 1483100986032652358, 1482579828677939354],
       "remove_discord_role_ids": []
+    },
+    "PHYSICAL_FITNESS" : {
+      "display": "PHYSICAL FITNESS",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1560753224024064082],
+      "remove_discord_role_ids": []
+    },
+    "SERVICE_LONGETIVITY" : {
+      "display": "SERVICE LONGETIVITY",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559041467182223490],
+      "remove_discord_role_ids": []
+    },
+    "HERO_OF_THE_WEAKENED" : {
+      "display": "HERO OF THE WEAKENED",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559041269613862932],
+      "remove_discord_role_ids": []
+    },
+    "WAR_ON_MOLD" : {
+      "display": "WAR ON MOLD",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040987160911983],
+      "remove_discord_role_ids": []
+    },
+    "PATH_TOWARDS_PROGRESS" : {
+      "display": "PATH TOWARDS PROGRESS",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040815173607464],
+      "remove_discord_role_ids": []
+    },
+    "SILVER_GLOVE" : {
+      "display": "SILVER GLOVE",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040713541427300],
+      "remove_discord_role_ids": []
+    },
+    "SILVEVR_BULLET" : {
+      "display": "SILVER BULLET",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040535618912306],
+      "remove_discord_role_ids": []
+    },
+    "SILVER_SWORD" : {
+      "display": "SILVER SWORD",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040218399506533],
+      "remove_discord_role_ids": []
+    },
+    "ROD_OF_ASCLEPIUS" : {
+      "display": "ROD OF ASCLEPIUS",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559040028041158736],
+      "remove_discord_role_ids": []
+    },
+    "LOTUS_PETAL" : {
+      "display": "LOTUS PETAL",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559039812021780480],
+      "remove_discord_role_ids": []
+    },
+    "LOTUS_FLOWER" : {
+      "display": "LOTUS FLOWER",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559039309980631061],
+      "remove_discord_role_ids": []
+    },
+    "ACCOLADE_OFFICER" : {
+      "display": "ACCOLADE_OFFICER",
+      "guild" : ["MAIN"],
+      "add_discord_role_ids": [1559044461919473694],
+      "remove_discord_role_ids": []
     }
+
   },
 
   "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],
