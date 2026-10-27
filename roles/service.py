@@ -875,8 +875,18 @@ class RoleManagerService:
 
     # ── Administrative ──
 
-    async def force_sync(self, context, target_discord_id=None):
-        """Re-push a record (or everyone) to Discord and Roblox."""
+    async def force_sync(self, context, target_discord_id=None, clean=False):
+        """Re-push a record (or everyone) to Discord and Roblox.
+
+        `clean=True` (one member only) first wipes their Discord roles and
+        rebuilds them from the record — see DiscordSynchronizer.clean_sync_record.
+        """
+        if clean and not target_discord_id:
+            return ActionResult.invalid(
+                "A clean sync strips and rebuilds one member's roles, so it needs a "
+                "user. It is not available for everyone at once."
+            )
+
         actor = self.actor_record(context)
         target = (
             self.repository.by_discord_id(target_discord_id)
@@ -900,6 +910,8 @@ class RoleManagerService:
                 return ActionResult.not_found(
                     f"No PERSONNEL record for <@{target_discord_id}>."
                 )
+            if clean:
+                return await self._clean_sync(context, target)
             self.sync_queue.enqueue(target, reason="forced")
             return ActionResult.success(
                 f"Synchronization queued for {target.label()}.", record=target,
@@ -909,6 +921,40 @@ class RoleManagerService:
         jobs = self.sync_queue.enqueue_many(records, reason="forced (all)")
         return ActionResult.success(
             f"Synchronization queued for {len(jobs)} record(s)."
+        )
+
+    async def _clean_sync(self, context, target):
+        """Run a clean Discord sync now and report it server by server.
+
+        Done directly rather than queued, so the person who asked sees what was
+        removed and given back. A normal sync is queued straight after: it
+        brings Roblox up to date, retries any server the clean pass could not
+        reach, and records the result on the sheet.
+        """
+        from roles.discord_sync import synchronizer as discord_synchronizer
+
+        cfg = roles_config.current()
+        dry_run = not cfg.sync.enabled
+        print(f"{context.log_prefix()} CLEAN SYNC of {target.label()} "
+              f"requested by {context.actor_discord_id}{' (dry run)' if dry_run else ''}.")
+
+        outcomes = await discord_synchronizer.clean_sync_record(target, cfg, dry_run)
+        job = self.sync_queue.enqueue(target, reason="clean sync follow-up")
+
+        lines = [f"**Clean sync for {target.username or target.discord_id}**"
+                 + (" (dry run — sync is disabled, nothing was changed)" if dry_run else "")]
+        for outcome in outcomes:
+            mark = "✅" if outcome.ok else "⚠️"
+            lines.append(f"{mark} {outcome.message}")
+        lines.append("Roblox roles and anything that failed above are handled by the "
+                     "normal sync queued after this.")
+
+        failed = [o for o in outcomes if not o.ok]
+        if failed and len(failed) == len(outcomes):
+            return ActionResult.error("\n".join(lines))
+        return ActionResult.success(
+            "\n".join(lines), record=target,
+            queued_targets=["DISCORD", "ROBLOX"] if job else [],
         )
 
     async def restructure(self, context, purge_incomplete=False):

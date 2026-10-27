@@ -380,15 +380,20 @@ def register_commands(tree):
     # ── /roles sync ──
 
     @roles_group.command(name="sync", description="Force re-synchronization to Discord and Roblox")
-    @app_commands.describe(user="A specific user, or omit to re-sync everyone")
+    @app_commands.describe(
+        user="A specific user, or omit to re-sync everyone",
+        clean="With a user: remove ALL their Discord roles, then give back only the ones they should have",
+    )
     async def sync_command(
         interaction: discord.Interaction,
         user: discord.Member = None,
+        clean: bool = False,
     ):
         await interaction.response.defer(ephemeral=True)
         result = await service.force_sync(
             context_from(interaction),
             target_discord_id=user.id if user else None,
+            clean=clean,
         )
         await _respond(interaction, result)
 

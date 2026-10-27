@@ -178,6 +178,19 @@ A member can belong to several branches. `/set branch` takes up to five and
 set to INTELLIGENCE ends up in INTELLIGENCE only. `N/A` on its own removes every
 branch.
 
+### Clean sync
+
+`/aria sync user:@x clean:True` clears residue a normal sync leaves alone. In
+the main server and every branch server the member is in, it removes **every**
+role the bot is able to remove — managed or not, including hand-given roles and
+other bots' roles — and gives back exactly what the record calls for. Each server
+is rewritten in one API call, so nobody is left half-stripped. Roles Discord
+does not let a bot remove (server booster, integration roles, anything at or
+above the bot's highest role) are kept. It runs immediately and reports per
+server; a normal sync is queued after it for Roblox and for any server that
+failed. One member at a time only, under `FORCE_SYNC`, and refused when the
+member's rank is not configured.
+
 ### General roles
 
 `general_roles` gives every registered member a set of Discord roles whatever
