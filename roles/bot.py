@@ -49,8 +49,21 @@ async def on_ready():
 
     if not _initialized:
         register_commands(tree)
-        await tree.sync()
-        print("[Roles] Slash commands synced!")
+        try:
+            synced = await tree.sync()
+            # Names what Discord actually accepted, subcommands included, so a
+            # missing command can be told apart from a stale Discord client.
+            listed = []
+            for command in synced:
+                subs = [o.name for o in command.options
+                        if isinstance(o, app_commands.AppCommandGroup)]
+                listed.append(f"/{command.name}" + (f" [{', '.join(subs)}]" if subs else ""))
+            print(f"[Roles] Slash commands synced: {'; '.join(listed)}")
+        except Exception as exc:
+            # Not fatal: the role manager works without it, and Discord keeps
+            # offering the previously synced commands.
+            print(f"[Roles] Slash command sync FAILED ({type(exc).__name__}: {exc}). "
+                  f"Discord keeps showing the previous command list until a sync succeeds.")
 
         discord_synchronizer.set_client(bot)
         await service.start(discord_client=bot)
