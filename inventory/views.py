@@ -6,13 +6,14 @@ from datetime import datetime
 import gspread
 import math
 
+from inventory import text_import
 from inventory.sheets import (
     SHEET_NAMES, get_points_for_type, calculate_cart_points,
     get_categories, get_items_in_category, get_cached_quantity,
-    get_supply_status, refresh_cache_async, write_cells_by_sheet,
+    get_supply_status, refresh_cache_async, write_cells_by_sheet, item_cache,
 )
 from inventory.state import (
-    get_user_cart, clear_user_cart, append_to_user_cart,
+    get_user_cart, set_user_cart, clear_user_cart, append_to_user_cart,
     pending_requests, update_pending_embeds, CART_TIMEOUT_HOURS,
 )
 
@@ -64,6 +65,17 @@ class PageSelectView(View):
             )
             cart_btn.callback = self.view_cart
             self.add_item(cart_btn)
+
+        import_btn = Button(
+            label="📝 Import Text Log (beta)",
+            style=discord.ButtonStyle.secondary,
+            custom_id="import_text_log"
+        )
+        import_btn.callback = self.import_text_log
+        self.add_item(import_btn)
+
+    async def import_text_log(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(ImportLogModal(self.user))
 
     async def page_selected(self, interaction: discord.Interaction):
         selected_page = interaction.data["values"][0]
@@ -360,6 +372,12 @@ class CartView(View):
     def __init__(self, user, page=0):
         super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
+
+        cart = get_user_cart(user.id)
+        total_pages = max(1, math.ceil(len(cart) / CART_DISPLAY_PAGE_SIZE))
+        # Removing the last entry of the last page would otherwise leave the
+        # view on a page that no longer exists.
+        page = min(max(page, 0), total_pages - 1)
         self.page = page
 
         add_more_btn = Button(
@@ -386,9 +404,6 @@ class CartView(View):
         clear_btn.callback = self.clear_cart
         self.add_item(clear_btn)
 
-        cart = get_user_cart(user.id)
-        total_pages = math.ceil(len(cart) / CART_DISPLAY_PAGE_SIZE) if cart else 1
-
         if page > 0:
             prev_btn = Button(label="⬅ Prev", style=discord.ButtonStyle.secondary, custom_id="cart_prev")
             prev_btn.callback = self.prev_page
@@ -398,6 +413,37 @@ class CartView(View):
             next_btn = Button(label="Next ➡", style=discord.ButtonStyle.secondary, custom_id="cart_next")
             next_btn.callback = self.next_page
             self.add_item(next_btn)
+
+        # Per-entry editing, so an imported log can be corrected entry by entry
+        # instead of only cleared as a whole.
+        if cart:
+            start = page * CART_DISPLAY_PAGE_SIZE
+            options = []
+            for index, entry in enumerate(cart[start:start + CART_DISPLAY_PAGE_SIZE], start):
+                op_symbol = "+" if entry["operation"] == "add" else "-"
+                options.append(discord.SelectOption(
+                    label=f"{index + 1}. {entry['name']}"[:100],
+                    description=f"{op_symbol}{entry['amount']} • {entry['sheet']}"[:100],
+                    value=str(index),
+                ))
+            edit_select = Select(
+                placeholder="✏️ Edit or remove an entry…",
+                options=options,
+                custom_id="edit_entry"
+            )
+            edit_select.callback = self.edit_entry
+            self.add_item(edit_select)
+
+    async def edit_entry(self, interaction: discord.Interaction):
+        index = int(interaction.data["values"][0])
+        cart = get_user_cart(self.user.id)
+        if index >= len(cart):
+            view = CartView(self.user, self.page)
+            await interaction.response.edit_message(content=view.get_cart_display(), view=view)
+            return
+        await interaction.response.send_modal(
+            EditEntryModal(self.user, index, cart[index], self.page)
+        )
 
     def get_cart_display(self):
         cart = get_user_cart(self.user.id)
@@ -460,6 +506,201 @@ class CartView(View):
 
     async def interaction_check(self, interaction: discord.Interaction):
         return interaction.user.id == self.user.id
+
+
+class EditEntryModal(Modal):
+    """Change one entry's amount; 0 removes it."""
+
+    def __init__(self, user, index, entry, page):
+        super().__init__(title=f"Edit: {entry['name']}"[:45])
+        self.user = user
+        self.index = index
+        self.page = page
+        # Which entry this was opened for, so an edit never lands on a
+        # different one if the log changed while the modal was open.
+        self.identity = (entry["sheet"], entry["row"], entry["operation"])
+        self.operation = entry["operation"]
+        self.current_qty = entry["current_qty"]
+
+        self.amount_input = TextInput(
+            label="Amount (0 removes the entry)",
+            default=str(entry["amount"]),
+            required=True,
+            max_length=10
+        )
+        self.add_item(self.amount_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            amount = int(self.amount_input.value.strip())
+        except ValueError:
+            await interaction.response.send_message(
+                "⚠️ Please enter a whole number (0 removes the entry).", ephemeral=True
+            )
+            return
+        if amount < 0:
+            await interaction.response.send_message(
+                "⚠️ The amount cannot be negative.", ephemeral=True
+            )
+            return
+
+        cart = get_user_cart(self.user.id)
+        entry = cart[self.index] if self.index < len(cart) else None
+        if entry is None or (entry["sheet"], entry["row"], entry["operation"]) != self.identity:
+            view = CartView(self.user, self.page)
+            await interaction.response.edit_message(
+                content="⚠️ Your log changed while that was open, so nothing was edited.\n\n"
+                        + view.get_cart_display(),
+                view=view
+            )
+            return
+
+        if amount == 0:
+            cart.pop(self.index)
+        elif self.operation == "subtract" and amount > self.current_qty:
+            await interaction.response.send_message(
+                f"⚠️ Cannot subtract **{amount}** from **{entry['name']}** "
+                f"(current quantity: **{self.current_qty}**).",
+                ephemeral=True
+            )
+            return
+        else:
+            entry["amount"] = amount
+        set_user_cart(self.user.id, cart)
+
+        view = CartView(self.user, self.page)
+        await interaction.response.edit_message(content=view.get_cart_display(), view=view)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Text log import (experimental)
+# ════════════════════════════════════════════════════════════════════════════
+
+#: One import at a time. Matching is CPU work on a small server; a second
+#: member waits their turn (and is told so) rather than both slowing down.
+_import_slot = asyncio.Semaphore(1)
+
+#: Never wait longer than this for an import, in seconds. The matcher stops
+#: itself well before (text_import.DEFAULT_TIME_BUDGET); this is the backstop.
+IMPORT_TIMEOUT = 60
+
+
+def _all_items():
+    """Every cached item, labelled with the register it lives in."""
+    return [
+        dict(item, sheet=sheet_name)
+        for sheet_name, items in item_cache.items()
+        for item in items
+    ]
+
+
+def _quote(text):
+    """Member-typed text, safe inside `code`."""
+    return str(text).replace("`", "'")[:60]
+
+
+def _import_report(result):
+    """What happened to each part of the text, for the member to check."""
+    sections = [f"**📝 Text log import** — added **{len(result.matched)}** item(s) to your log."]
+
+    def item_label(item, others):
+        # The register only matters when the name alone does not say which.
+        shared = sum(1 for other in others if other["name"] == item["name"]) > 1
+        return f"**{item['name']}**" + (f" ({item['sheet']})" if shared else "")
+
+    guesses = [(item, typed) for item, _qty, typed, score in result.matched if score < 1.0]
+    if guesses:
+        sections.append("\n🔍 **Double-check these guesses:**")
+        sections += [f"• `{_quote(typed)}` → **{item['name']}**" for item, typed in guesses]
+
+    if result.ambiguous:
+        sections.append("\n❓ **Could be more than one item — not added, add these manually:**")
+        for typed, qty, options in result.ambiguous:
+            names = " / ".join(item_label(item, options) for item in options)
+            sections.append(f"• `{_quote(typed)} {qty}` → {names}")
+
+    if result.unrecognized:
+        sections.append("\n⚠️ **Not recognised — ignored:**")
+        sections += [f"• `{_quote(typed)} {qty}`" for typed, qty in result.unrecognized]
+
+    if result.problems:
+        sections.append("\n⚠️ **Could not read:**")
+        sections += [f"• {problem}" for problem in result.problems]
+
+    if result.unprocessed:
+        sections.append(
+            f"\n⏱️ **{result.unprocessed}** entr{'y was' if result.unprocessed == 1 else 'ies were'} "
+            f"not processed in time — add them manually or import them separately."
+        )
+
+    sections.append("\nReview your log and use **✏️ Edit or remove an entry** to fix anything.")
+
+    text = "\n".join(sections)
+    if len(text) > 1900:
+        text = text[:1880].rsplit("\n", 1)[0] + "\n… (list shortened)"
+    return text
+
+
+class ImportLogModal(Modal):
+    def __init__(self, user):
+        super().__init__(title="Import Text Log (experimental)")
+        self.user = user
+
+        self.log_input = TextInput(
+            label="One entry per line: ITEM NAME QUANTITY",
+            style=discord.TextStyle.paragraph,
+            placeholder="Iron Ore 25\nCopper Wire 10\nMed-Kit 2",
+            required=True,
+            max_length=4000
+        )
+        self.add_item(self.log_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Answer straight away; the matching below can take a few seconds on
+        # a small server, far past Discord's 3-second deadline.
+        busy = _import_slot.locked()
+        await interaction.response.edit_message(
+            content="⏳ " + (
+                "Another log is being read right now — yours is next, hang on…"
+                if busy else
+                "Reading your log and matching it against the inventory…"
+            ),
+            view=None
+        )
+
+        try:
+            async with _import_slot:
+                if not any(item_cache.values()):
+                    await refresh_cache_async()
+                # In a worker thread, so the three bots sharing this event
+                # loop keep running while it works.
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(text_import.import_log, self.log_input.value, _all_items()),
+                    timeout=IMPORT_TIMEOUT,
+                )
+        except Exception as e:
+            print(f"[Inventory] Text log import failed: {type(e).__name__}: {e}")
+            await interaction.edit_original_response(
+                content=f"⚠️ Could not read that log ({type(e).__name__}). Nothing was added.",
+                view=PageSelectView(self.user)
+            )
+            return
+
+        for item, quantity, _typed, _score in result.matched:
+            append_to_user_cart(self.user.id, {
+                "sheet": item["sheet"],
+                "category": item["category"],
+                "name": item["name"],
+                "type": item.get("type", ""),
+                "row": item["row"],
+                "operation": "add",
+                "amount": quantity,
+                "current_qty": item["quantity"],
+            })
+
+        view = CartView(self.user)
+        await interaction.edit_original_response(content=view.get_cart_display(), view=view)
+        await interaction.followup.send(_import_report(result), ephemeral=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
