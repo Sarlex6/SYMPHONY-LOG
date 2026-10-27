@@ -42,8 +42,9 @@ back to the sheet.
 | `permissions.py` | **Centralized authorization.** The only place an action is allowed or refused. |
 | `service.py` | `RoleManagerService` — the single mutation path. |
 | `sync_queue.py` | Retryable outbound sync with backoff and a persisted dead-letter list. |
-| `discord_sync.py` | Rank → main role + auxiliary roles, rank+branch → branch roles, universal ranks, grantable roles. |
-| `roblox_sync.py` | rank+branch → group roles, via Open Cloud v2 multi-role. |
+| `discord_sync.py` | Rank → main role + auxiliary roles, rank+branches → branch roles, universal ranks, general roles, grantable roles. |
+| `roblox_sync.py` | rank + primary line → ONE group role, via Open Cloud v2 multi-role. |
+| `state.py` | Runtime switches that survive a restart (branch-line Roblox roles on/off). |
 | `roblox_oauth.py` | Discord → Roblox account verification, **registration only**. |
 | `oauth_routes.py` | The OAuth callback, mounted on the existing aiohttp server. |
 | `rover.py` | Legacy verification fallback. |
@@ -67,13 +68,22 @@ Managed area starts at **row 10**. Nothing at or above row 9 is ever written.
 | D | IDENTIFICATION | written; `RobloxName (discordname)`, display only — the Discord half is re-checked every `sync.username_refresh_minutes` |
 | E | TIMEZONE | written; canonical UTC offset (`UTC+1`) |
 | F | RANK | written as the configured *display* string; dropdown managed |
-| G | BRANCH | written as the configured *display* string; dropdown managed |
+| G | BRANCH | every branch the member is in, as configured *display* strings joined with `, ` (`ECHELON, INTELLIGENCE`), or `N/A`; multi-select dropdown — see below |
 | H | NOTES | **never authored** — carried with the record when rows move |
 | J | STATUS | written; ACTIVE / SEMI-ACTIVE / IN-ACTIVE / EMPTY |
 | K | DATE OF ENTRY | `MM.DD.YYYY`, written once at registration, never again |
 | L | VERIFICATION | `AUTOMATIC EXECUTIVE SYSTEM` on system changes |
 | N, O | gap | never written |
-| P–Y | technical | Discord ID, Roblox ID, record UID, sync hash, sync status, last sync, revision, LOA, source, grantable roles — hidden, 40px |
+| P–Z | technical | Discord ID, Roblox ID, record UID, sync hash, sync status, last sync, revision, LOA, source, grantable roles, Roblox primary line — hidden, 40px |
+
+**Column G is a multi-select dropdown, and one setting of it is manual.** The
+Sheets API has no field for "Allow multiple selections", so the bot cannot switch
+it on. Do it once: select the managed rows of column G → *Data → Data validation*
+→ the dropdown rule → *Advanced options* → tick **Allow multiple selections**.
+The bot leaves an unchanged rule alone, so the setting survives restarts. When the
+branch list in the configuration changes, the rule has to be rewritten, which can
+switch it off again; the log then says `ACTION NEEDED` and the box has to be
+ticked again. Values written by the bot are unaffected either way.
 
 Column Y was added after the sheet was built. If the worksheet is narrower than
 that, `sheets_gateway.ensure_grid_width()` appends the missing column at the far
@@ -150,16 +160,33 @@ What a member holds in one server is computed, never accumulated:
 ```
 main server     rank's primary role
               + rank's auxiliary roles
-              + their branch's auxiliary roles
+              + the auxiliary roles of EVERY branch they are in
 
 branch server   that branch's discord_roles_by_rank[rank]
-                — only if the member belongs to the branch,
+                — only if the member belongs to that branch,
                   OR the rank is universal
+
+any server      the general roles configured for it
 
 then, per server:
 desired = (the above − roles a held grantable role cancels)
           | roles a held grantable role adds
 ```
+
+A member can belong to several branches. `/set branch` takes up to five and
+**replaces** the member's branches with exactly those: someone in ECHELON who is
+set to INTELLIGENCE ends up in INTELLIGENCE only. `N/A` on its own removes every
+branch.
+
+### General roles
+
+`general_roles` gives every registered member a set of Discord roles whatever
+their rank or branch, keyed by server: `{"MAIN": [...], "ECHELON": [...]}`. A
+branch key means that branch's own server, for every registered member who is in
+it. A grantable role cancels one for a particular member by listing it in
+`remove_discord_role_ids`. They are managed, so they come off when the record is
+removed. Existing members pick up newly added general roles on the next
+`/aria sync`.
 
 Reconciliation is `add = desired − current`, `remove = (managed ∩ current) −
 desired`, where `managed` is every role ID the configuration owns in that server.
@@ -181,7 +208,8 @@ everywhere, so its holder receives `discord_roles_by_rank[rank]` in every branch
 server that maps the rank, whatever column G says — including N/A.
 
 It affects branch **servers** only. The branch auxiliary roles in the main server
-and the Roblox branch roles still follow the member's own branch.
+still follow the member's own branches, and a Roblox branch line can only be one
+of them.
 
 ### Grantable roles
 
@@ -204,7 +232,7 @@ permission system. It only adjusts Discord roles, in exactly one server.
 |---|---|
 | `guild` | `"MAIN"`, a branch key for that branch's own server, or a list of them (`["MAIN", "ECHELON"]`). A branch scope does not require the member to belong to that branch. |
 | `add_discord_role_ids` | Granted on top of the rank's roles. Managed, so they come off on revocation. |
-| `remove_discord_role_ids` | Roles the rank or branch would otherwise give there, which this cancels. |
+| `remove_discord_role_ids` | Roles the rank, branch or general roles would otherwise give there, which this cancels. |
 
 - **Several servers, one mixed list.** When `guild` is a list, both role lists
   may mix IDs from all of those servers. Discord role IDs are unique across
@@ -384,9 +412,27 @@ error page.
 
 ## Roblox role model
 
-Roles are **additive**. The rank's `N/A` entry is the baseline and is always
-applied; the branch entry is applied on top. A `TRAINING_ASSOCIATE` in `ECHELON`
-holds both the N/A role and the ECHELON role.
+A member holds **exactly one** managed Roblox role: their **primary role**. Each
+rank maps a *mainline* role (its `N/A` entry) and optionally one role per branch
+(the *branch lines*). Everyone starts on the mainline.
+
+- **`/set primary`** — anyone may switch their own primary role between the
+  mainline and the line of any of their branches that maps a role at their rank.
+  A member of both ECHELON and INTELLIGENCE at OPERATIONS COORDINATOR can choose
+  between the mainline, ECHELON and INTELLIGENCE roles for that rank. Authority
+  is the `SET_PRIMARY_ROLE` rule (configured: `SELF`). The choice is stored in
+  technical column Z.
+- **`/aria branch-roles disable`** — switches branch lines off for everyone:
+  nobody can switch to one, and everyone currently on one is moved back to the
+  mainline (on the sheet, so re-enabling does not restore old choices). `enable`
+  allows switching again. Authority is `TOGGLE_BRANCH_ROLES` (configured: rank
+  order 14 and up, i.e. Executive Team and CEO). The switch is kept in
+  `data/roles_state.json`; `roblox.branch_roles_enabled` in the config is the
+  value used while that file does not exist.
+- **Falling back is automatic.** A chosen branch line only applies while it is
+  available — the member still belongs to the branch, the branch maps a role at
+  their current rank, and branch lines are enabled. Otherwise the mainline role
+  is used. Leaving the branch through `/set branch` also clears the choice.
 
 Applied with the current Open Cloud multi-role endpoints — **not** the deprecated
 `PATCH /memberships/{id}` (UpdateGroupMembership), which modelled membership as a
@@ -409,7 +455,9 @@ unassign = (managed ∩ current) − desired
 ```
 
 `managed` is every role ID the configuration owns in that group, so a role
-granted for an unrelated reason is never removed.
+granted for an unrelated reason is never removed. Every managed group is
+visited, so a role from the previous line is removed even if it lived in another
+group.
 
 **Writes are verified.** A key lacking `group:write` can return 200 without
 applying anything, so after mutating, the membership is re-read and compared. A
@@ -439,6 +487,9 @@ and display names, for filling in the mappings.
   reads a half-written layout.
 - `service._commit` re-reads under the lock and re-applies only the fields the
   command intended to change, so a concurrent edit to an unrelated field survives.
+  "Intended" is measured against the snapshot the command started from — not
+  against the fresh read, which would have copied every field edited on the sheet
+  since then back to its old value.
 
 ---
 
@@ -481,13 +532,24 @@ The rules it sets are the conversational half of the security model:
 5. Acting on someone else requires a real `@mention`; no guessing at names.
 6. Rank/branch names must match the configured lists; no closest-match guessing.
 
-Rule 3 exists because of a specific failure mode. `_INTENT_HINTS` is a regex gate
-that decides whether a message is routed to the Role Manager at all. If it misses
-a genuine request, the message falls through to normal conversation — where
-Angela now knows she has these powers and could describe an action that never
-ran. The gate is therefore deliberately wide (a false positive costs one cheap
-flash-lite call; a false negative costs a fabricated success), with rule 3 as the
-backstop.
+Rule 3 exists because of a specific failure mode. A regex gate
+(`looks_like_management_request`) decides whether a message is routed to the
+Role Manager at all. If it misses a genuine request, the message falls through to
+normal conversation — where Angela knows she has these powers and could describe
+an action that never ran. Rule 3 is the backstop for that.
+
+The gate used to be very wide (any message mentioning "role", "status",
+"record", "who is" ...), and the parser behind it would answer ordinary chat with
+a clarification question, so people who had asked for nothing were told their
+request was incomplete. Now:
+
+- The gate wants a request shape: an action verb together with something it acts
+  on (a generic word, or a configured rank/branch/grantable name), or one of the
+  lookup/registration phrasings.
+- The parser is told most messages are not requests, and may only ask for
+  clarification when a specific action was clearly requested.
+- Anything the parser does not return as a high-confidence, known action falls
+  through to normal conversation **silently**.
 
 ---
 
@@ -522,7 +584,9 @@ this list.
 - `default_registration_rank`
 - Main Discord server ID and per-rank role IDs
 - Branch names, branch server IDs, branch role IDs
-- Roblox group ID and rank+branch → group role mappings
+- Roblox group ID and rank → mainline / branch-line group role mappings
+- `general_roles` role IDs, if every registered member should carry some
+- Ticking "Allow multiple selections" on column G's dropdown (one-time, by hand)
 - `ROLES_TOKEN`, `ROBLOX_API_KEY`, and `ROBLOX_OAUTH_CLIENT_ID` / `ROBLOX_OAUTH_CLIENT_SECRET`
 - Roblox OAuth app approval (private mode caps at 10 unique users)
 - **Every permission rule** — the hierarchy is entirely undefined and all

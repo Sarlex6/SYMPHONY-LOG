@@ -1,58 +1,89 @@
 import asyncio
 import sys
+import traceback
 from config import config
 
 RECONNECT_DELAY = 15  # seconds between reconnection attempts
 
 
-async def run_inventory_bot():
-    """Run the inventory bot with auto-reconnect."""
-    while True:
-        try:
-            # Re-import to get fresh module state if needed
-            from inventory.bot import bot, tree
-            from inventory.sheets import refresh_cache
+async def _run_forever(name, get_bot, token):
+    """Run one bot, restarting it whenever it stops.
 
-            print("[Main] Inventory bot connecting...")
-            await bot.start(config["DISCORD_TOKEN"])
+    discord.py already reconnects through ordinary network trouble on its own;
+    this loop is for what it gives up on. A client that has stopped is closed,
+    and a closed client's start() returns immediately without connecting — so
+    without clear() a bot that dropped out once stayed offline until the whole
+    process was restarted, while this loop printed "reconnecting" forever.
+    """
+    while True:
+        bot = None
+        try:
+            bot = get_bot()
+            if bot.is_closed():
+                _reopen(bot)
+            print(f"[Main] {name} bot connecting...")
+            await bot.start(token)
 
         except Exception as e:
-            print(f"[Main] Inventory bot error: {type(e).__name__}: {e}")
+            print(f"[Main] {name} bot error: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
-        print(f"[Main] Inventory bot disconnected. Reconnecting in {RECONNECT_DELAY}s...")
+        finally:
+            # start() can also return or raise with the client still open (a
+            # failed login, say); close it so the next attempt starts clean.
+            if bot is not None and not bot.is_closed():
+                try:
+                    await bot.close()
+                except Exception:
+                    pass
+
+        print(f"[Main] {name} bot disconnected. Reconnecting in {RECONNECT_DELAY}s...")
         await asyncio.sleep(RECONNECT_DELAY)
+
+
+def _reopen(bot):
+    """Make a closed client startable again.
+
+    clear() resets the client's own state, but closing it also closed its HTTP
+    connector, and discord.py only creates a new one when none is set. Left in
+    place, every request of the next login fails with "Connector is closed".
+    """
+    import discord
+
+    connector = getattr(bot.http, "connector", discord.utils.MISSING)
+    if connector is not discord.utils.MISSING and getattr(connector, "closed", False):
+        bot.http.connector = discord.utils.MISSING
+    bot.clear()
+
+
+def _inventory_bot():
+    from inventory.bot import bot
+    return bot
+
+
+def _assistant_bot():
+    from assistant.bot import bot
+    return bot
+
+
+def _roles_bot():
+    from roles.bot import bot
+    return bot
+
+
+async def run_inventory_bot():
+    """Run the inventory bot with auto-reconnect."""
+    await _run_forever("Inventory", _inventory_bot, config["DISCORD_TOKEN"])
 
 
 async def run_assistant_bot():
     """Run the assistant bot with auto-reconnect."""
-    while True:
-        try:
-            from assistant.bot import bot
-
-            print("[Main] Assistant bot connecting...")
-            await bot.start(config["ASSISTANT_TOKEN"])
-
-        except Exception as e:
-            print(f"[Main] Assistant bot error: {type(e).__name__}: {e}")
-
-        print(f"[Main] Assistant bot disconnected. Reconnecting in {RECONNECT_DELAY}s...")
-        await asyncio.sleep(RECONNECT_DELAY)
+    await _run_forever("Assistant", _assistant_bot, config["ASSISTANT_TOKEN"])
 
 
 async def run_roles_bot():
     """Run the role management bot with auto-reconnect."""
-    while True:
-        try:
-            from roles.bot import bot
-
-            print("[Main] Roles bot connecting...")
-            await bot.start(config["ROLES_TOKEN"])
-
-        except Exception as e:
-            print(f"[Main] Roles bot error: {type(e).__name__}: {e}")
-
-        print(f"[Main] Roles bot disconnected. Reconnecting in {RECONNECT_DELAY}s...")
-        await asyncio.sleep(RECONNECT_DELAY)
+    await _run_forever("Roles", _roles_bot, config["ROLES_TOKEN"])
 
 
 async def main():

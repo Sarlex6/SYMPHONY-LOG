@@ -21,8 +21,9 @@ import asyncio
 
 from roles import config as roles_config
 from roles import layout, loa, permissions, roblox_oauth, rover, timezones
+from roles import state as roles_state
 from roles.config import Permission
-from roles.errors import RoleManagerError
+from roles.errors import RoleManagerError, SyncError
 from roles.models import (
     ActionContext,
     ActionOrigin,
@@ -311,7 +312,7 @@ class RoleManagerService:
             entry_date=format_entry_date(),
             status=Status.ACTIVE,
             rank_key=rank_key,
-            branch_key=cfg.registration_branch_key(),
+            branch_keys=cfg.normalize_branch_keys([cfg.registration_branch_key()]),
             sync_status=SyncStatus.NEVER,
             source=ChangeSource.SYSTEM,
         )
@@ -465,8 +466,17 @@ class RoleManagerService:
             previous_rank=previous_rank,
         )
 
-    async def set_branch(self, context, branch_input, target_discord_id):
-        """Set column G. Affects branch Discord roles and the Roblox mapping."""
+    async def set_branches(self, context, branch_inputs, target_discord_id):
+        """Set column G: every branch the member belongs to.
+
+        REPLACES the member's branches with exactly the ones given. Someone in
+        ECHELON who is set to INTELLIGENCE ends up in INTELLIGENCE only; to be
+        in both, both have to be given. "N/A" on its own takes the member out of
+        every branch.
+
+        `branch_inputs` is a list of branch names or keys; a single string, or
+        entries holding several comma-separated names, are accepted too.
+        """
         cfg = roles_config.current()
 
         allowed, target, denial = self._authorize(
@@ -475,30 +485,232 @@ class RoleManagerService:
         if not allowed:
             return denial
 
-        branch = cfg.branch(branch_input) or cfg.branch_by_display(branch_input)
-        if branch is None:
+        if isinstance(branch_inputs, str):
+            branch_inputs = [branch_inputs]
+        requested = [
+            part.strip()
+            for raw in (branch_inputs or ())
+            for part in str(raw or "").split(",")
+            if part.strip()
+        ]
+        if not requested:
+            return ActionResult.invalid("No branch given.")
+
+        resolved, unknown = [], []
+        for name in requested:
+            branch = cfg.branch(name) or cfg.branch_by_display(name)
+            if branch is None:
+                unknown.append(name)
+            else:
+                resolved.append(branch)
+
+        if unknown:
             available = ", ".join(sorted(b.display for b in cfg.branches.values())) or "none configured yet"
+            names = ", ".join(f"`{name}`" for name in unknown)
             return ActionResult.invalid(
-                f"`{branch_input}` is not a configured branch. Available: {available}."
+                f"{names} {'is' if len(unknown) == 1 else 'are'} not a configured "
+                f"branch. Available: {available}."
             )
 
-        if target.branch_key == branch.key:
+        real = [b for b in resolved if not b.is_na]
+        if real and len(real) < len(resolved):
             return ActionResult.invalid(
-                f"{target.label()} is already assigned to **{branch.display}**."
+                "N/A means no branch, so it cannot be combined with other branches. "
+                "Give N/A on its own to take someone out of every branch."
             )
 
-        previous_branch = target.branch_key
-        updated = target.with_changes(branch_key=branch.key)
-        saved = await self._commit(updated, f"set branch {previous_branch or '-'} -> {branch.key}")
+        new_keys = cfg.normalize_branch_keys(b.key for b in real)
+        new_display = cfg.branches_display(new_keys) or "N/A"
+        name = target.username or target.discord_id
+
+        if new_keys == target.branch_keys:
+            return ActionResult.invalid(f"{name} is already assigned to **{new_display}**.")
+
+        previous = target.branch_keys
+        changes = {"branch_keys": new_keys}
+        primary_note = ""
+        if target.primary_line and target.primary_line not in new_keys:
+            # The line their Roblox role came from belongs to a branch they
+            # just left, so the choice no longer makes sense.
+            changes["primary_line"] = ""
+            primary_note = (
+                " Their Roblox primary role is back on the mainline, since they "
+                "left the branch it came from."
+            )
+
+        saved = await self._commit(
+            target.with_changes(**changes),
+            f"set branches {','.join(previous) or 'N/A'} -> {','.join(new_keys) or 'N/A'}",
+        )
 
         job = self.sync_queue.enqueue(saved, reason="branch change")
+        replaced = (
+            f" (replacing {cfg.branches_display(previous)})" if previous else ""
+        )
 
         return ActionResult.success(
-            f"{saved.username or saved.discord_id} moved to branch "
-            f"**{branch.display}**. Discord and Roblox synchronization queued.",
+            f"{name} is now in **{new_display}**{replaced}. Discord and Roblox "
+            f"synchronization queued.{primary_note}",
             record=saved,
             queued_targets=["DISCORD", "ROBLOX"] if job else [],
-            previous_branch=previous_branch,
+            previous_branches=list(previous),
+        )
+
+    # ── Roblox primary role ──
+
+    @staticmethod
+    def _line_label(cfg, line):
+        if not line:
+            return "mainline (N/A)"
+        branch = cfg.branches.get(line)
+        return f"{branch.display if branch else line} line"
+
+    async def set_primary_role(self, context, line_input, target_discord_id=None):
+        """Choose which line the member's single Roblox role comes from.
+
+        The mainline (the rank's "N/A" role) or the line of one of the member's
+        own branches, if that branch maps a Roblox role at their rank. Refused
+        while branch lines are switched off.
+        """
+        cfg = roles_config.current()
+        target_id = target_discord_id or context.actor_discord_id
+
+        allowed, target, denial = self._authorize(
+            context, Permission.SET_PRIMARY_ROLE, target_id
+        )
+        if not allowed:
+            return denial
+
+        rank = cfg.rank(target.rank_key)
+        enabled = roles_state.branch_roles_enabled(cfg)
+        name = target.username or target.discord_id
+
+        raw = str(line_input or "").strip()
+        if raw.upper() in ("", "N/A", "NA", "MAINLINE", "MAIN", "NONE", "DEFAULT"):
+            line = ""
+        else:
+            branch = cfg.branch(raw) or cfg.branch_by_display(raw)
+            if branch is None:
+                return ActionResult.invalid(
+                    f"`{raw}` is not a branch. Choose the mainline (N/A) or one of "
+                    f"{name}'s branches."
+                )
+            line = "" if branch.is_na else branch.key
+
+        if line:
+            branch = cfg.branches[line]
+            if not enabled:
+                return ActionResult.invalid(
+                    "Branch-line Roblox roles are currently disabled, so everyone "
+                    "holds their mainline role."
+                )
+            if rank is None or not rank.syncs_roblox:
+                return ActionResult.invalid(
+                    f"{rank.display if rank else 'That rank'} has no Roblox role, so "
+                    f"there is no primary role to choose."
+                )
+            if line not in target.branch_keys:
+                return ActionResult.invalid(
+                    f"{name} is not in **{branch.display}**, so its line is not "
+                    f"available to them."
+                )
+            if line not in cfg.primary_line_options(rank, target.branch_keys, enabled):
+                return ActionResult.invalid(
+                    f"**{branch.display}** has no Roblox role at the rank of "
+                    f"**{rank.display}**, so only the mainline is available there."
+                )
+
+        if line == target.primary_line:
+            return ActionResult.invalid(
+                f"{name}'s Roblox primary role is already the "
+                f"**{self._line_label(cfg, line)}**."
+            )
+
+        saved = await self._commit(
+            target.with_changes(primary_line=line),
+            f"set primary line {target.primary_line or 'N/A'} -> {line or 'N/A'}",
+        )
+        job = self.sync_queue.enqueue(saved, reason="primary role change", targets=["ROBLOX"])
+
+        return ActionResult.success(
+            f"{name}'s Roblox primary role is now the **{self._line_label(cfg, line)}**. "
+            f"Roblox synchronization queued.",
+            record=saved,
+            queued_targets=["ROBLOX"] if job else [],
+            primary_line=line,
+        )
+
+    async def set_branch_roles_enabled(self, context, enabled):
+        """Switch branch-line Roblox roles on or off for everyone.
+
+        Off: members can no longer choose a branch line, and everyone currently
+        on one is moved back to the mainline — on the sheet, not just in effect,
+        so switching back on later does not silently restore old choices.
+        """
+        actor = self.actor_record(context)
+        decision = permissions.check(
+            Permission.TOGGLE_BRANCH_ROLES, actor, actor,
+            actor_discord_id=context.actor_discord_id, origin=context.origin,
+        )
+        print(permissions.audit_line(context, Permission.TOGGLE_BRANCH_ROLES, decision))
+        if not decision.allowed:
+            return ActionResult.denied(decision.reason, permission=Permission.TOGGLE_BRANCH_ROLES)
+
+        cfg = roles_config.current()
+        if roles_state.branch_roles_enabled(cfg) == bool(enabled):
+            return ActionResult.invalid(
+                f"Branch-line Roblox roles are already {'enabled' if enabled else 'disabled'}."
+            )
+
+        # Switched first: from here on nobody can pick a branch line, and the
+        # synchronizer treats every choice as the mainline even before the
+        # sheet catches up.
+        roles_state.set_branch_roles_enabled(enabled, context.actor_discord_id)
+        print(f"{context.log_prefix()} Branch-line Roblox roles "
+              f"{'ENABLED' if enabled else 'DISABLED'} by {context.actor_discord_id}.")
+
+        if enabled:
+            # Nobody's choice changed, but a line set by hand on the sheet while
+            # this was off takes effect now and needs pushing.
+            chosen = [r for r in self.repository.live_records()
+                      if r.primary_line and not r.is_incomplete()]
+            self.sync_queue.enqueue_many(chosen, reason="branch roles enabled")
+            return ActionResult.success(
+                "Branch-line Roblox roles are **enabled**. Members can switch their "
+                "primary role with `/set primary`; everyone stays on the mainline "
+                "until they do.",
+                enabled=True,
+            )
+
+        moved, note = [], ""
+        try:
+            async with self.gateway.write_lock:
+                await self.repository.load()
+                on_branch_line = [
+                    r for r in self.repository.live_records()
+                    if r.primary_line and not r.is_incomplete()
+                ]
+                moved = await self.repository.save_records(
+                    [r.with_changes(primary_line="") for r in on_branch_line]
+                )
+        except (RoleManagerError, SyncError) as exc:
+            # The switch already holds, so their Roblox role still goes back to
+            # the mainline; only the sheet column is behind.
+            on_branch_line = [r for r in self.repository.live_records() if r.primary_line]
+            moved = on_branch_line
+            note = (f"\n\n⚠️ The sheet could not be updated ({exc}); their stored "
+                    f"choice will be cleared on a later attempt, but their Roblox "
+                    f"role is moved to the mainline regardless.")
+
+        self.sync_queue.enqueue_many(moved, reason="branch roles disabled")
+        print(f"[Roles] Branch roles disabled: {len(moved)} member(s) moved to the mainline.")
+
+        return ActionResult.success(
+            f"Branch-line Roblox roles are **disabled**. {len(moved)} member(s) "
+            f"moved back to their mainline role; Roblox synchronization queued. "
+            f"Nobody can switch to a branch line until this is enabled again.{note}",
+            enabled=False,
+            moved=len(moved),
         )
 
     # ── Grantable roles ──
@@ -790,6 +1002,8 @@ class RoleManagerService:
             f"**Duplicates:** {len(report['duplicates'])}",
             f"**Unknown ranks:** {len(report['unknown_ranks'])}",
             f"**Unknown grantable roles:** {len(report['unknown_grants'])}",
+            f"**Unknown branches:** {len(report['unknown_branches'])}",
+            f"**Branch-line Roblox roles:** {roles_state.describe()}",
             f"**Awaiting sync:** {len(report['unsynced'])}",
             f"**Sync queue:** {stats['queued']} queued, "
             f"{stats['dead_letters']} failed, worker "
@@ -851,7 +1065,15 @@ class RoleManagerService:
         member holds. It receives the freshly read record and returns the one
         to save, so two such changes arriving together both land instead of the
         second overwriting the first.
+
+        Callers must not await between reading the target from the snapshot and
+        calling this: `before` below has to be the snapshot they changed.
         """
+        # The copy the caller started from, taken before anything can await and
+        # let a poll replace the snapshot. Comparing against it is what tells
+        # the intended change apart from fields that are merely stale.
+        before = self.repository.by_uid(record.record_uid)
+
         async with self.gateway.write_lock:
             await self.repository.load()
 
@@ -864,13 +1086,16 @@ class RoleManagerService:
             if transform is not None:
                 merged = transform(current)
             else:
-                # Re-apply the intended change onto the freshly read row, so a
-                # concurrent edit to an unrelated field is not clobbered.
+                # Re-apply only the fields the caller changed onto the freshly
+                # read row. Comparing against `current` instead would also copy
+                # every field edited on the sheet since the snapshot was taken
+                # back to its old value.
+                base = before or current
                 merged = current.with_changes(**{
                     field: getattr(record, field)
-                    for field in ("rank_key", "branch_key", "timezone", "status",
-                                  "loa_raw", "username", "category")
-                    if getattr(record, field) != getattr(current, field)
+                    for field in ("rank_key", "branch_keys", "timezone", "status",
+                                  "loa_raw", "username", "category", "primary_line")
+                    if getattr(record, field) != getattr(base, field)
                 })
 
             saved = await self.repository.save_record(merged)
@@ -881,13 +1106,26 @@ class RoleManagerService:
     def _describe_record(self, record):
         cfg = roles_config.current()
         rank = cfg.rank(record.rank_key)
-        branch = cfg.branch(record.branch_key)
         category = layout.effective_category(record, cfg)
+        enabled = roles_state.branch_roles_enabled(cfg)
+        line = cfg.effective_primary_line(
+            rank, record.branch_keys, record.primary_line, enabled
+        )
+        primary = self._line_label(cfg, line)
+        if record.primary_line and record.primary_line != line:
+            reason = ("branch lines are disabled" if not enabled
+                      else "not available at this rank or branch")
+            primary += (f" (chose the {self._line_label(cfg, record.primary_line)}, "
+                        f"{reason})")
+        options = cfg.primary_line_options(rank, record.branch_keys, enabled)
 
         lines = [
             f"**{record.username or record.discord_id}**",
             f"Rank: {rank.display if rank else (record.rank_key or 'unset')}",
-            f"Branch: {branch.display if branch else (record.branch_key or 'N/A')}",
+            f"Branches: {cfg.branches_display(record.branch_keys) or 'N/A'}",
+            f"Roblox primary role: {primary}"
+            + (f"  •  lines available: mainline, "
+               f"{', '.join(cfg.branches[k].display for k in options)}" if options else ""),
             f"Category: {category.value if category else 'unassigned'}",
             f"Status: {record.status.value if record.status else 'unset'}",
             f"Timezone: {timezones.describe(record.timezone) if record.timezone else 'unset'}",

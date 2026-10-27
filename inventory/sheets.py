@@ -1,3 +1,4 @@
+import asyncio
 import gspread
 import json
 import os
@@ -14,6 +15,15 @@ def get_gspread_client():
         return gspread.service_account(filename=credentials_path)
 
 gc = get_gspread_client()
+
+#: (connect, read) timeouts in seconds for every Sheets call, from this bot and
+#: from the role manager, which shares this client. gspread sets none by
+#: default, so a connection that stalls would hang its caller forever — and
+#: the caller holding the role manager's sheet lock blocks every role command
+#: behind it.
+SHEETS_TIMEOUT = (10, 45)
+gc.set_timeout(SHEETS_TIMEOUT)
+
 spreadsheet = gc.open_by_key(config["SPREADSHEET_ID"])
 
 SHEET_NAMES = ["MATERIALS&SUPPLIES", "EQUIPMENT", "FIREARMS", "MELEES"]
@@ -58,22 +68,36 @@ def calculate_cart_points(cart):
     return total
 
 # ── Cache for spreadsheet data ───────────────────────────────────────────────
+# Filled in place, never rebound: other modules hold a reference to this dict
+# (`from inventory.sheets import item_cache`), and rebinding the name left
+# them looking at the old, empty one.
 item_cache = {}
 
-def refresh_cache():
-    """Pull all item data from the four sheets and cache it."""
-    global item_cache
-    item_cache = {}
+#: Columns read per row: C (category), D (name), E (type), H (quantity).
+_MIN_ROW_WIDTH = 8
 
-    for sheet_name in SHEET_NAMES:
-        worksheet = spreadsheet.worksheet(sheet_name)
-        all_values = worksheet.get_all_values()
+
+def _fetch_items():
+    """Read all four registers and return {sheet_name: [items]}.
+
+    Blocking. One batched API call for all four sheets, where reading them one
+    by one cost eight (a metadata lookup plus a read, per sheet).
+    """
+    response = spreadsheet.values_batch_get([f"'{name}'" for name in SHEET_NAMES])
+    value_ranges = response.get("valueRanges", [])
+
+    fresh = {}
+    for sheet_name, value_range in zip(SHEET_NAMES, value_ranges):
+        all_values = value_range.get("values", [])
 
         items = []
         current_category = ""
 
         for row_idx in range(9, len(all_values)):
-            row = all_values[row_idx]
+            # The batch read drops trailing empty cells, so pad each row out to
+            # the columns used below.
+            row = [str(cell) for cell in all_values[row_idx]]
+            row.extend([""] * (_MIN_ROW_WIDTH - len(row)))
 
             if row[2].strip():
                 current_category = row[2].strip()
@@ -97,9 +121,34 @@ def refresh_cache():
                 "quantity": quantity,
             })
 
-        item_cache[sheet_name] = items
+        fresh[sheet_name] = items
 
+    return fresh
+
+
+def _apply_cache(fresh):
+    item_cache.clear()
+    item_cache.update(fresh)
     print(f"Cache refreshed: {sum(len(v) for v in item_cache.values())} items loaded")
+
+
+def refresh_cache():
+    """Pull all item data from the four sheets and cache it. BLOCKING — from
+    async code use refresh_cache_async(), or the bot stalls while it runs."""
+    _apply_cache(_fetch_items())
+
+
+async def refresh_cache_async():
+    """refresh_cache() without blocking the event loop.
+
+    The inventory, assistant and roles bots share one event loop. A Sheets read
+    run directly on it freezes all three for as long as it takes, and any
+    button press or command arriving in that window misses Discord's 3-second
+    deadline and shows as "This interaction failed".
+    """
+    fresh = await asyncio.to_thread(_fetch_items)
+    # Swapped in on the loop thread, so nothing ever sees a half-filled cache.
+    _apply_cache(fresh)
 
 
 def get_cached_quantity(sheet_name, row):
@@ -135,6 +184,18 @@ def get_supply_status(quantity):
         return "⚠️ LOW"
     else:
         return "✅ HIGH"
+
+
+def write_cells_by_sheet(cells_by_sheet):
+    """Write {sheet_name: [gspread.Cell]} to the registers. Blocking.
+
+    Uses one cached metadata read for all the worksheet handles rather than one
+    per sheet.
+    """
+    worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+    for sheet_name, cells in cells_by_sheet.items():
+        if cells:
+            worksheets[sheet_name].update_cells(cells)
 
 
 def build_approval_embeds(cart, requester_name, requester_avatar_url, note=""):

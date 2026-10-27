@@ -48,8 +48,22 @@ ACTION_SPECS = {
         "self_only": False,
     },
     "set_branch": {
-        "description": "Set another user's branch.",
-        "args": {"branch": "branch name or key", "user": "Discord user ID (required)"},
+        "description": "Set the branches a user belongs to. A member can be in several "
+                       "branches at once. mode 'replace' (default) makes 'branches' their "
+                       "complete new list, dropping any branch not named; 'add' and "
+                       "'remove' change only the branches named. N/A alone with 'replace' "
+                       "takes them out of every branch.",
+        "args": {"branches": "list of branch names or keys",
+                 "mode": "replace|add|remove",
+                 "user": "Discord user ID (required)"},
+        "self_only": False,
+    },
+    "set_primary_role": {
+        "description": "Choose which line the user's single Roblox role comes from: the "
+                       "mainline (N/A) or one of the branches they belong to. Omit 'user' "
+                       "to mean the requester.",
+        "args": {"line": "'mainline' / 'N/A', or a branch name",
+                 "user": "optional Discord user ID"},
         "self_only": False,
     },
     "grant_role": {
@@ -163,45 +177,83 @@ def capability_briefing():
 # ── Intent detection ─────────────────────────────────────────────────────────
 
 #: Cheap pre-filter. Avoids an LLM call on every message Angela receives —
-#: only text that plausibly concerns role management gets parsed as a command.
+#: only text that plausibly ASKS for a management action gets parsed.
 #:
-#: Erring wide is the right trade here. A false positive costs one cheap
-#: flash-lite call that returns "not a management request"; a false negative
-#: sends the request to Angela's conversational path, where she now knows she
-#: has these abilities and might describe an action that never ran. Persona rule
-#: 3 ("never claim an action was performed unless the system reported back") is
-#: the backstop, but the gate should not be leaning on it.
-_INTENT_HINTS = re.compile(
+#: It used to pass any message containing a word like "role", "status",
+#: "active", "record" or "who is", which in a chat about a roleplay
+#: organisation is most of them. Every one of those cost a parser call, and the
+#: parser, asked to read an ordinary remark as a command, would come back with
+#: a clarification question — which surfaced as a "your request is incomplete"
+#: reply to someone who had asked for nothing.
+#:
+#: So a message has to look like a request: an action verb together with
+#: something that verb can act on, or one of the lookup/registration phrasings.
+#: The parser is the second filter, and anything it does not recognise as a
+#: request falls through to normal conversation silently (see parse_intent).
+_ACTION_WORDS = re.compile(
     r"\b("
-    r"register|registration|verify|verified|"
-    r"rank|ranks|promote|promotion|promoted|demote|demotion|demoted|"
-    r"branch|branches|transfer|transferred|reassign|assign|appoint|"
-    r"grant|grants|granted|grantable|revoke|revoked|permit|role|roles|"
-    r"timezone|time ?zone|tz|"
-    r"loa|leave of absence|on leave|going away|"
-    r"status|active|inactive|semi.?active|"
-    r"personnel|roster|record|records|"
-    r"sync|synchronise|synchronize|resync|"
-    r"whois|who ?is|my (rank|record|branch|status|timezone)"
+    r"set|change|update|make|put|move|transfer|reassign|assign|appoint|"
+    r"promote|demote|give|grant|revoke|remove|strip|take|add|drop|"
+    r"switch|swap|mark|clear|reset|log|"
+    r"sync|resync|re-sync|synchroni[sz]e|register|verify|link"
     r")\b",
     re.IGNORECASE,
 )
+
+_TARGET_WORDS = re.compile(
+    r"\b("
+    r"rank|ranks|branch|branches|division|"
+    r"timezone|time ?zone|tz|utc|gmt|"
+    r"status|active|inactive|in-active|semi-?active|"
+    r"loa|leave|"
+    r"role|roles|primary|mainline|"
+    r"record|records|personnel|roster|roblox|account"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Phrasings that are requests on their own.
+_STANDALONE_REQUESTS = re.compile(
+    r"\b("
+    r"whois|who ?is <@|"
+    r"(what'?s|what is|show|check|look ?up|tell me|see)\b[^.?!\n]{0,40}"
+    r"\b(my|his|her|their|<@!?\d+>)\s*'?s?\s+"
+    r"(rank|branch|branches|record|status|time ?zone|loa|primary|role)|"
+    r"register me|sign me up|"
+    r"i('d| would)? (like|want|need) to (register|sign up|verify)|"
+    r"(can|could|may) i (register|sign up|verify)|"
+    r"(roles?|personnel|sync|system) (status|report|integrity)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _names_configured_item(lowered):
+    """Whether the text names a configured rank, branch or grantable role."""
+    cfg = roles_config.current()
+    names = (
+        [r.display for r in cfg.ranks.values()]
+        + [b.display for b in cfg.branches.values() if not b.is_na]
+        + [g.display for g in cfg.grantable_roles.values()]
+    )
+    for name in names:
+        name = name.strip().casefold()
+        if name and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", lowered):
+            return True
+    return False
 
 
 def looks_like_management_request(text):
     """Whether a message is worth parsing as a management command."""
     if not text or len(text.strip()) < 3:
         return False
-    if _INTENT_HINTS.search(text):
+    if _STANDALONE_REQUESTS.search(text):
         return True
-    # A grantable role named outright ("give @x Event Host") is a request even
-    # when none of the generic words above appear.
-    lowered = text.casefold()
-    return any(
-        g.display.strip().casefold() in lowered
-        for g in roles_config.current().grantable_roles.values()
-        if g.display.strip()
-    )
+    if not _ACTION_WORDS.search(text):
+        return False
+    # "put me in ECHELON", "give @x Event Host": the configured names count as
+    # something to act on as much as the generic words do.
+    return bool(_TARGET_WORDS.search(text)) or _names_configured_item(text.casefold())
 
 
 def _build_parser_prompt():
@@ -221,10 +273,32 @@ def _build_parser_prompt():
         f"CONFIGURED RANKS: {ranks}\n"
         f"CONFIGURED BRANCHES: {branches}\n"
         f"CONFIGURED GRANTABLE ROLES: {grantables}\n\n"
+        "FIRST DECIDE WHETHER THIS IS A REQUEST AT ALL. Most messages are not.\n"
+        "- It is a request ONLY if the member is directly asking YOU to carry out one "
+        "  of the actions above, or to look up a record, now.\n"
+        "- It is NOT a request when they: ask how ranks, branches or roles work; chat "
+        "  about a rank, a promotion or a branch; joke; speculate; talk about what "
+        "  someone else did; ask whether you are ABLE to do something; or talk to "
+        "  somebody other than you.\n"
+        "- If it is not a request, or you are not sure it is one, return the empty "
+        "  result. Never answer a message that is not clearly a request with a "
+        "  clarification question.\n"
+        "- Use 'clarification' ONLY when the member clearly asked for one specific "
+        "  action but left out something it needs (which user, which rank, ...). In "
+        "  that case still put that action in 'action'.\n"
+        "- 'confidence' is 'high' only when you are sure this is a request for that "
+        "  action.\n\n"
         "RULES:\n"
         "- A name from CONFIGURED GRANTABLE ROLES means grant_role / revoke_role. "
         "  A name from CONFIGURED RANKS means set_rank. Never use one action for "
         "  the other's names; if a name is in neither list, ask via 'clarification'.\n"
+        "- set_branch: a member can belong to several branches. 'branches' is always "
+        "  a JSON list. \"Put @x in ECHELON and INTELLIGENCE\" -> mode replace with "
+        "  both. \"Also add @x to MEDICAL\" -> mode add. \"Take @x out of R&D\" -> mode "
+        "  remove. \"Move/set @x to ECHELON\" -> mode replace.\n"
+        "- set_primary_role is about which Roblox role the member holds: the mainline "
+        "  one or a branch-line one (\"switch my roblox role to my ECHELON line\", "
+        "  \"put me back on mainline\").\n"
         "- Output JSON only, no prose, no markdown fences.\n"
         "- Never decide whether the user is permitted to do this. You do not "
         "  evaluate authority; the backend does. Just identify the request.\n"
@@ -274,22 +348,32 @@ async def parse_intent(text, mentioned_ids=None):
         print(f"[Roles:Angela] Unparseable intent JSON: {raw[:200]!r}")
         return None
 
-    action = (data.get("action") or "").strip()
-    if not action and not data.get("clarification"):
+    if not isinstance(data, dict):
+        return None
+
+    action = str(data.get("action") or "").strip()
+    confidence = str(data.get("confidence") or "high").strip().lower()
+
+    # No action means the parser did not see a request for anything in
+    # particular. That is ordinary conversation, and it goes to the normal
+    # path — a "please be more specific" reply here is exactly the error people
+    # kept getting for messages that asked for nothing. Likewise when the
+    # parser itself is unsure.
+    if not action or confidence != "high":
         return None
 
     proposed = ProposedAction(
         action=action,
-        args=data.get("args") or {},
-        confidence=(data.get("confidence") or "high").strip().lower(),
-        clarification=(data.get("clarification") or "").strip(),
+        args=data.get("args") if isinstance(data.get("args"), dict) else {},
+        confidence=confidence,
+        clarification=str(data.get("clarification") or "").strip(),
     )
 
-    if action and not proposed.is_known:
-        print(f"[Roles:Angela] Model proposed unknown action {action!r}; rejecting.")
-        return ProposedAction(
-            "", clarification=f"I do not have an action called `{action}`.",
-        )
+    if not proposed.is_known:
+        # Not something she can do, so not a management request she can act
+        # on; the conversational path can still answer it.
+        print(f"[Roles:Angela] Model proposed unknown action {action!r}; ignoring.")
+        return None
 
     return proposed
 
@@ -337,6 +421,49 @@ def _target_id(args, actor_discord_id, required=False):
 
     # A name with no mention. Deliberately not guessed at.
     return None
+
+
+def _as_list(value):
+    """A model-supplied list of names, which may arrive as a list or as one
+    comma-separated string."""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return [
+        part.strip()
+        for item in items
+        for part in str(item or "").split(",")
+        if part.strip()
+    ]
+
+
+def _combine_branches(record, names, mode):
+    """The complete branch list after adding or removing `names`.
+
+    Returns (names, problem). With no record the names go through unchanged and
+    the service reports the missing record in its own words.
+    """
+    if record is None:
+        return names, ""
+
+    cfg = roles_config.current()
+    current = list(record.branch_keys)
+    keys, unknown = [], []
+    for name in names:
+        branch = cfg.branch(name) or cfg.branch_by_display(name)
+        if branch is None:
+            unknown.append(name)
+        elif not branch.is_na:
+            keys.append(branch.key)
+
+    if mode == "add":
+        # Unknown names are passed on so the service can list what exists.
+        return current + [k for k in keys if k not in current] + unknown, ""
+
+    if unknown:
+        return [], f"{', '.join(f'`{n}`' for n in unknown)} is not a configured branch."
+    remaining = [k for k in current if k not in keys]
+    return remaining or [roles_config.NA_BRANCH_KEY], ""
 
 
 async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
@@ -404,14 +531,29 @@ async def execute(proposed, actor_discord_id, guild_id=None, channel_id=None,
             )
 
         if action == "set_branch":
-            value = args.get("branch") or args.get("value")
-            if not value:
+            names = _as_list(args.get("branches") or args.get("branch") or args.get("value"))
+            if not names:
                 return ActionResult.invalid("No branch given.")
             if resolved is None:
-                return ActionResult.invalid("Mention the user whose branch should change.")
-            return await service.set_branch(
-                context, str(value), target_id or actor_discord_id
-            )
+                return ActionResult.invalid("Mention the user whose branches should change.")
+            target = target_id or actor_discord_id
+            mode = str(args.get("mode") or "replace").strip().lower()
+            if mode in ("add", "remove"):
+                # The service only knows "replace", which is what the command
+                # does too. Adding or removing one branch is turned into the
+                # complete new list here, from the member's current branches.
+                names, problem = _combine_branches(service.find_record(target), names, mode)
+                if problem:
+                    return ActionResult.invalid(problem)
+            return await service.set_branches(context, names, target)
+
+        if action == "set_primary_role":
+            value = args.get("line") or args.get("value") or args.get("branch")
+            if not value:
+                return ActionResult.invalid(
+                    "Say which line: the mainline, or one of the member's branches."
+                )
+            return await service.set_primary_role(context, str(value), target_id)
 
         if action in ("grant_role", "revoke_role"):
             value = args.get("role") or args.get("value")

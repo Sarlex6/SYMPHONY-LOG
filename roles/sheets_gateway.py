@@ -17,12 +17,18 @@ This module knows about cells and ranges. It does not know what a UserRecord is.
 import asyncio
 
 import gspread
+import requests
 
 from roles import columns
 from roles.errors import SheetStructureError, TransientSyncError
 
 # Reuse the existing authenticated client and open spreadsheet.
 from inventory.sheets import spreadsheet
+
+#: What a failed Sheets call can raise. APIError is an error response; a
+#: RequestException is no response at all - a dropped connection or, now that
+#: the client has timeouts (see inventory/sheets.py), a call that took too long.
+_SHEETS_ERRORS = (gspread.exceptions.APIError, requests.exceptions.RequestException)
 
 # ── Concurrency ──────────────────────────────────────────────────────────────
 
@@ -144,7 +150,7 @@ async def ensure_grid_width():
 
         try:
             await asyncio.to_thread(spreadsheet.batch_update, body)
-        except gspread.exceptions.APIError as exc:
+        except _SHEETS_ERRORS as exc:
             raise TransientSyncError(
                 f"Failed to add {missing} technical column(s): {exc}"
             ) from exc
@@ -157,7 +163,7 @@ async def ensure_grid_width():
 # ── Reads ────────────────────────────────────────────────────────────────────
 
 async def read_managed_block():
-    """Read A10:Y<footer-1> as a padded 2D list.
+    """Read A10:Z<footer-1> as a padded 2D list.
 
     Returns (rows, footer_row) where rows[i] corresponds to sheet row
     FIRST_MANAGED_ROW + i and is always READ_COL_END wide.
@@ -176,7 +182,7 @@ async def read_managed_block():
         raw = await asyncio.to_thread(
             worksheet.get, a1, value_render_option="UNFORMATTED_VALUE"
         )
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to read PERSONNEL block: {exc}") from exc
 
     width = columns.READ_COL_END
@@ -223,7 +229,7 @@ async def write_cells(cells, value_input_option="USER_ENTERED"):
         await asyncio.to_thread(
             worksheet.update_cells, cells, value_input_option=value_input_option
         )
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to write PERSONNEL cells: {exc}") from exc
 
 
@@ -257,7 +263,7 @@ async def insert_managed_rows(count, footer_row):
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, body)
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to insert {count} row(s): {exc}") from exc
 
     await get_worksheet(force_refresh=True)
@@ -304,7 +310,7 @@ async def delete_managed_rows(count, footer_row):
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, body)
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to delete {count} row(s): {exc}") from exc
 
     await get_worksheet(force_refresh=True)
@@ -333,7 +339,7 @@ async def clear_managed_range(first_row, last_row):
 
     try:
         await asyncio.to_thread(worksheet.batch_clear, ranges)
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to clear rows {first_row}-{last_row}: {exc}") from exc
 
 
@@ -363,7 +369,7 @@ async def ensure_technical_columns():
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, {"requests": requests})
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to configure technical columns: {exc}") from exc
 
     if columns.WRITE_TECH_HEADERS:
@@ -447,7 +453,7 @@ async def normalize_managed_merges(sections, footer_row):
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, {"requests": requests})
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         # Never fatal: the values are already written and correct. A failed merge
         # is cosmetic, and retrying it on the next layout pass costs nothing.
         print(f"[Roles] Could not rebuild category merges: {exc}")
@@ -484,7 +490,7 @@ async def ensure_status_formatting(footer_row):
 
     try:
         meta = await asyncio.to_thread(spreadsheet.fetch_sheet_metadata)
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Could not read sheet metadata: {exc}") from exc
 
     # Identify rules we own: a TEXT_EQ on one of our status words, over column J.
@@ -532,7 +538,7 @@ async def ensure_status_formatting(footer_row):
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, {"requests": requests})
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(f"Failed to install status formatting: {exc}") from exc
 
     print(f"[Roles] Status colours applied to column J "
@@ -602,6 +608,16 @@ async def set_dropdown_values(col, values, footer_row):
         order for everything that survives, appends only what is new, and edits
         ONLY `condition.values` on the existing rule - every other property is
         written back exactly as it was found.
+
+    Column G is a MULTI-select dropdown (a member can be in several branches),
+    and that is the one property this cannot set: the Sheets API has no field
+    for "Allow multiple selections", so it is switched on by hand in the Sheets
+    UI. Leaving an unchanged rule alone is what keeps it switched on. When the
+    branch list really does change the rule has to be rewritten, which may
+    switch it off again - that is logged loudly, because until it is switched
+    back on the dropdown only lets one branch be picked. Several branches typed
+    by hand or written by the bot still stand either way (the rule is
+    non-strict; they just show the invalid-value marker).
 
     Refuses any column other than F and G.
     """
@@ -691,7 +707,7 @@ async def set_dropdown_values(col, values, footer_row):
 
     try:
         await asyncio.to_thread(spreadsheet.batch_update, body)
-    except gspread.exceptions.APIError as exc:
+    except _SHEETS_ERRORS as exc:
         raise TransientSyncError(
             f"Failed to update column {letter} dropdown: {exc}"
         ) from exc
@@ -699,3 +715,9 @@ async def set_dropdown_values(col, values, footer_row):
     print(f"[Roles] Column {letter} dropdown written: "
           f"{len(existing_first) if existing_first else 0} -> "
           f"{len(final_values)} value(s).")
+
+    if col == columns.COL_BRANCH:
+        print("[Roles] ACTION NEEDED: column G's dropdown was rewritten, which can "
+              "turn off 'Allow multiple selections'. In the sheet, select the "
+              "managed rows of column G -> Data -> Data validation -> the dropdown "
+              "rule -> Advanced options -> tick 'Allow multiple selections'.")

@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ui import View, Select, Button, Modal, TextInput
 from inventory.sheets import build_approval_embeds
@@ -8,12 +9,29 @@ import math
 from inventory.sheets import (
     SHEET_NAMES, get_points_for_type, calculate_cart_points,
     get_categories, get_items_in_category, get_cached_quantity,
-    get_supply_status, refresh_cache, spreadsheet, build_approval_embed,
+    get_supply_status, refresh_cache_async, write_cells_by_sheet,
 )
 from inventory.state import (
     get_user_cart, clear_user_cart, append_to_user_cart,
-    pending_requests, update_pending_embeds,
+    pending_requests, update_pending_embeds, CART_TIMEOUT_HOURS,
 )
+
+#: How long a menu keeps working without being touched. It used to be 15
+#: minutes, so anyone who opened /log, went to count stock and came back found
+#: every button answering "This interaction failed". The cart behind it lives
+#: for CART_TIMEOUT_HOURS, so the menu does too.
+MENU_TIMEOUT = CART_TIMEOUT_HOURS * 3600
+
+#: Strong references to fire-and-forget tasks, which asyncio otherwise only
+#: holds weakly and can collect mid-run.
+_background_tasks = set()
+
+
+def _in_background(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -22,7 +40,7 @@ from inventory.state import (
 
 class PageSelectView(View):
     def __init__(self, user):
-        super().__init__(timeout=900)
+        super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
 
         select = Select(
@@ -81,7 +99,7 @@ class PageSelectView(View):
 
 class CategorySelectView(View):
     def __init__(self, user, sheet_name, categories):
-        super().__init__(timeout=900)
+        super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
         self.sheet_name = sheet_name
 
@@ -136,7 +154,7 @@ ITEMS_PER_PAGE = 20  # leave room for nav options in the select
 
 class ItemSelectView(View):
     def __init__(self, user, sheet_name, category, items, page=0):
-        super().__init__(timeout=900)
+        super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
@@ -233,7 +251,7 @@ class ItemSelectView(View):
 
 class OperationSelectView(View):
     def __init__(self, user, sheet_name, category, item):
-        super().__init__(timeout=900)
+        super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
         self.sheet_name = sheet_name
         self.category = category
@@ -322,9 +340,11 @@ class AmountModal(Modal):
             "current_qty": self.item["quantity"],
         })
 
+        # Edit the menu through this modal's own interaction. Going through the
+        # button press that opened the modal used that press's token, which
+        # Discord expires after 15 minutes.
         view = CartView(self.user)
-        await interaction.response.defer()
-        await self.original_interaction.edit_original_response(
+        await interaction.response.edit_message(
             content=view.get_cart_display(),
             view=view
         )
@@ -338,7 +358,7 @@ CART_DISPLAY_PAGE_SIZE = 15
 
 class CartView(View):
     def __init__(self, user, page=0):
-        super().__init__(timeout=900)
+        super().__init__(timeout=MENU_TIMEOUT)
         self.user = user
         self.page = page
 
@@ -479,8 +499,6 @@ class SubmitDetailsModal(Modal):
         requester_name = interaction.user.display_name
         requester_avatar = interaction.user.display_avatar.url
 
-        embed = build_approval_embed(self.cart, requester_name, requester_avatar, note)
-
         request_id = f"{interaction.user.id}_{int(datetime.utcnow().timestamp())}"
 
         approval_channel = bot.get_channel(int(config["APPROVAL_CHANNEL_ID"]))
@@ -491,6 +509,12 @@ class SubmitDetailsModal(Modal):
             )
             return
 
+        # Acknowledge first. Posting a large request takes several messages, and
+        # the channel's rate limit can stretch that past Discord's 3-second
+        # deadline - the member then saw an error and resubmitted, even though
+        # the request had already gone through.
+        await interaction.response.defer()
+
         approval_view = ApprovalView(
             requester=interaction.user,
             cart=self.cart,
@@ -499,13 +523,23 @@ class SubmitDetailsModal(Modal):
 
         embeds = build_approval_embeds(self.cart, requester_name, requester_avatar, note)
 
-        if len(embeds) == 1:
-            approval_msg = await approval_channel.send(embed=embeds[0], view=approval_view)
-        else:
-            # Send overflow embeds first (no view), then the final one with the buttons
-            for overflow_embed in embeds[:-1]:
-                await approval_channel.send(embed=overflow_embed)
-            approval_msg = await approval_channel.send(embed=embeds[-1], view=approval_view)
+        try:
+            if len(embeds) == 1:
+                approval_msg = await approval_channel.send(embed=embeds[0], view=approval_view)
+            else:
+                # Send overflow embeds first (no view), then the final one with the buttons
+                for overflow_embed in embeds[:-1]:
+                    await approval_channel.send(embed=overflow_embed)
+                approval_msg = await approval_channel.send(embed=embeds[-1], view=approval_view)
+        except discord.HTTPException as e:
+            # The cart is still intact, so the member can simply submit again.
+            print(f"[Inventory] Could not post log request: {type(e).__name__}: {e}")
+            await interaction.edit_original_response(
+                content="⚠️ Could not post your request to the approval channel. "
+                        "Your entries are kept — please try submitting again.",
+                view=CartView(self.user),
+            )
+            return
 
         approval_view.message_id = approval_msg.id
 
@@ -527,7 +561,7 @@ class SubmitDetailsModal(Modal):
 
         clear_user_cart(self.user.id)
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=(
                 "✅ **Request submitted!**\n"
                 "Your log request has been sent to the approval channel.\n"
@@ -552,6 +586,10 @@ class ApprovalView(View):
         self.cart = cart
         self.request_id = request_id
         self.message_id = None
+        #: Set the moment an approver acts, before anything is awaited. Without
+        #: it, two approvers clicking together - or one double-clicking while
+        #: the sheet write was in progress - applied the same request twice.
+        self.handled = False
 
         approve_btn = Button(
             label="✅ Approve",
@@ -570,43 +608,57 @@ class ApprovalView(View):
         self.add_item(reject_btn)
 
     async def approve(self, interaction: discord.Interaction):
+        if self.handled:
+            await interaction.response.send_message(
+                "⚠️ This request is already being handled.", ephemeral=True
+            )
+            return
+        self.handled = True
+
         approver = interaction.user
 
         await interaction.response.defer()
 
         highest_role = approver.top_role.name if approver.top_role else "Unknown"
+        written = False
 
         try:
             today = datetime.utcnow().strftime("%d/%m/%Y")
 
-            entries_by_sheet = {}
+            # Fresh quantities first. The cache can be minutes old, and an
+            # adjustment applied to a stale quantity silently overwrites
+            # whatever changed on the sheet since.
+            await refresh_cache_async()
+
+            # Running totals per item, so a cart that touches the same item
+            # twice applies both adjustments instead of the second one
+            # overwriting the first.
+            quantities = {}
+            cells_by_sheet = {}
             for entry in self.cart:
-                if entry["sheet"] not in entries_by_sheet:
-                    entries_by_sheet[entry["sheet"]] = []
-                entries_by_sheet[entry["sheet"]].append(entry)
+                key = (entry["sheet"], entry["row"])
+                current_qty = quantities.get(key, get_cached_quantity(*key))
 
-            for sheet_name, entries in entries_by_sheet.items():
-                worksheet = spreadsheet.worksheet(sheet_name)
+                if entry["operation"] == "add":
+                    new_qty = current_qty + entry["amount"]
+                else:
+                    new_qty = current_qty - entry["amount"]
 
-                batch_cells = []
-                for entry in entries:
-                    current_qty = get_cached_quantity(entry["sheet"], entry["row"])
+                new_qty = max(0, new_qty)
+                quantities[key] = new_qty
 
-                    if entry["operation"] == "add":
-                        new_qty = current_qty + entry["amount"]
-                    else:
-                        new_qty = current_qty - entry["amount"]
+            for (sheet_name, row), new_qty in quantities.items():
+                cells_by_sheet.setdefault(sheet_name, []).extend([
+                    gspread.Cell(row=row, col=6, value=get_supply_status(new_qty)),
+                    gspread.Cell(row=row, col=8, value=new_qty),
+                    gspread.Cell(row=row, col=10, value=today),
+                    gspread.Cell(row=row, col=11, value=highest_role),
+                ])
 
-                    new_qty = max(0, new_qty)
-                    status = get_supply_status(new_qty)
-                    row = entry["row"]
-
-                    batch_cells.append(gspread.Cell(row=row, col=6, value=status))
-                    batch_cells.append(gspread.Cell(row=row, col=8, value=new_qty))
-                    batch_cells.append(gspread.Cell(row=row, col=10, value=today))
-                    batch_cells.append(gspread.Cell(row=row, col=11, value=highest_role))
-
-                worksheet.update_cells(batch_cells)
+            # Off the event loop: the three bots share it, and a Sheets write
+            # run on it stalls every one of them until it returns.
+            await asyncio.to_thread(write_cells_by_sheet, cells_by_sheet)
+            written = True
 
             embed = interaction.message.embeds[0]
             embed.color = discord.Color.green()
@@ -620,9 +672,11 @@ class ApprovalView(View):
 
             pending_requests.pop(self.request_id, None)
 
-            refresh_cache()
+            await refresh_cache_async()
 
-            await update_pending_embeds()
+            # One message edit per pending request; not something this click
+            # should wait on.
+            _in_background(update_pending_embeds())
 
             try:
                 await self.requester.send(
@@ -632,22 +686,34 @@ class ApprovalView(View):
                 pass
 
         except Exception as e:
+            print(f"[Inventory] Approval of {self.request_id} failed: {type(e).__name__}: {e}")
+            if not written:
+                # Nothing reached the sheet, so it is safe to try again.
+                self.handled = False
             await interaction.followup.send(
-                f"⚠️ Error updating spreadsheet: {str(e)}", ephemeral=True
+                f"⚠️ Error updating spreadsheet: {type(e).__name__}: {e}"
+                + ("" if written else "\nNothing was written; you can try again."),
+                ephemeral=True
             )
 
     async def reject(self, interaction: discord.Interaction):
-        modal = RejectReasonModal(self.requester, interaction.message, interaction.user, self.request_id)
+        if self.handled:
+            await interaction.response.send_message(
+                "⚠️ This request is already being handled.", ephemeral=True
+            )
+            return
+        modal = RejectReasonModal(self, interaction.message, interaction.user)
         await interaction.response.send_modal(modal)
 
 
 class RejectReasonModal(Modal):
-    def __init__(self, requester, message, rejector, request_id):
+    def __init__(self, approval_view, message, rejector):
         super().__init__(title="Rejection Reason")
-        self.requester = requester
+        self.approval_view = approval_view
+        self.requester = approval_view.requester
         self.original_message = message
         self.rejector = rejector
-        self.request_id = request_id
+        self.request_id = approval_view.request_id
 
         self.reason_input = TextInput(
             label="Reason for rejection",
@@ -659,6 +725,14 @@ class RejectReasonModal(Modal):
         self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Approved while this modal was open.
+        if self.approval_view.handled:
+            await interaction.response.send_message(
+                "⚠️ This request was already handled.", ephemeral=True
+            )
+            return
+        self.approval_view.handled = True
+
         reason = self.reason_input.value or "No reason provided"
         highest_role = self.rejector.top_role.name if self.rejector.top_role else "Unknown"
 

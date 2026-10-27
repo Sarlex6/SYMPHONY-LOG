@@ -108,6 +108,20 @@ VERIFICATION_SYSTEM_MARKER = "AUTOMATIC EXECUTIVE SYSTEM"
 #: Column K format. Two digits for month and day, e.g. 02.07.2026.
 ENTRY_DATE_FORMAT = "%m.%d.%Y"
 
+#: Column G value for a member in no branch. Mirrors config.NA_BRANCH_KEY,
+#: which cannot be imported here without a cycle.
+NA_BRANCH = "N/A"
+
+#: Column G separator. The same ", " a Google Sheets multi-select dropdown
+#: writes, so a value picked in the sheet and one written by the system read
+#: back identically.
+BRANCH_SEPARATOR = ", "
+
+#: Bumped when the meaning of a record's sync state changes, which puts every
+#: record out of step once so the next poll re-synchronizes it.
+#:   2 - multi-branch membership and the single primary Roblox role
+SYNC_MODEL_VERSION = 2
+
 
 def format_entry_date(dt=None):
     return (dt or datetime.utcnow()).strftime(ENTRY_DATE_FORMAT)
@@ -140,7 +154,10 @@ class UserRecord:
     username: str = ""                  # column D, "Roblox (discord)", display only
     timezone: str = ""                  # column E, canonical UTC offset
     rank_key: str = ""                  # column F, key into RankRegistry
-    branch_key: str = ""                # column G, key into BranchRegistry
+    #: Column G. Every branch the member belongs to, as BranchRegistry keys in
+    #: configuration order. Empty means N/A: a member is either in no branch or
+    #: in real branches, never both. A tuple so snapshots compare by value.
+    branch_keys: tuple = ()
     notes: str = ""                     # column H, carried but never authored
     status: "Status | None" = None      # column J
     entry_date: str = ""                # column K, MM.DD.YYYY, write-once
@@ -150,6 +167,11 @@ class UserRecord:
     #: Keys of the grantable roles (role modifiers) this person holds, sorted.
     #: A tuple so snapshots stay immutable and compare by value.
     grants: tuple = ()
+    #: Which line the member's single Roblox role comes from: a branch key, or
+    #: "" for the mainline (the rank's "N/A" mapping). Chosen by the member with
+    #: /set primary. Only a preference: it falls back to the mainline whenever
+    #: the branch line is unavailable. See RolesConfig.effective_primary_line.
+    primary_line: str = ""
     loa_raw: str = ""
     sync_hash: str = ""
     sync_status: SyncStatus = SyncStatus.NEVER
@@ -192,7 +214,7 @@ class UserRecord:
             self.discord_id,
             self.roblox_id,
             self.rank_key.strip().upper(),
-            self.branch_key.strip().upper(),
+            ",".join(self.branch_keys) or NA_BRANCH,
             self.category.value if self.category else "",
             self.status.value if self.status else "",
         ))
@@ -200,6 +222,9 @@ class UserRecord:
         # the fingerprint it had before they existed and is not re-synchronized.
         if self.grants:
             payload += "|" + format_grants(self.grants)
+        if self.primary_line:
+            payload += "|primary:" + self.primary_line
+        payload += f"|v{SYNC_MODEL_VERSION}"
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
     def needs_sync(self):

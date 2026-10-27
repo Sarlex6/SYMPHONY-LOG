@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from config import config as app_config
 
-from roles.models import Category
+from roles.models import BRANCH_SEPARATOR, Category
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -100,16 +100,18 @@ class RankDef:
     main_aux_discord_role_ids: list = field(default_factory=list)
     #: True for ranks whose authority is not tied to one branch (Executive Team,
     #: CEO). A universal rank receives its branch-server roles in EVERY branch
-    #: server that maps the rank, whatever the member's own branch is. A normal
-    #: rank only receives them in the server of the branch it belongs to.
-    #: Discord only — Roblox branch roles still follow the member's own branch.
+    #: server that maps the rank, whatever the member's own branches are. A
+    #: normal rank only receives them in the servers of its own branches.
+    #: Discord only — the Roblox primary line still has to be one of the
+    #: member's own branches.
     universal: bool = False
-    #: Roblox group roles for this rank, keyed by branch key, as RobloxRoleRef.
+    #: Roblox group roles for this rank, keyed by line, as RobloxRoleRef.
     #: {"N/A": <ref>, "BRANCH_KEY": <ref>}
     #:
-    #: These are ADDITIVE, not alternatives. The "N/A" entry is the baseline and
-    #: is always applied; a branch entry is applied ON TOP of it when the member
-    #: belongs to that branch. See RolesConfig.roblox_assignments().
+    #: These are ALTERNATIVES: a member holds exactly one of them, their
+    #: primary role. "N/A" is the mainline and the default; a branch entry is
+    #: the branch line, which a member of that branch may switch to with
+    #: /set primary. See RolesConfig.roblox_assignments().
     #:
     #: An empty mapping means this rank has no Roblox equivalent — Roblox
     #: synchronization is skipped entirely rather than guessed at.
@@ -127,8 +129,8 @@ class RankDef:
         return self.roblox_roles_by_branch.get((branch_key or NA_BRANCH_KEY).upper())
 
     def roblox_role_for(self, branch_key):
-        """Role ID mapped for one branch key. Does NOT include the N/A baseline —
-        use RolesConfig.roblox_assignments() for what a member should actually hold."""
+        """Role ID mapped for one line. Says nothing about which line a member
+        is on — use RolesConfig.roblox_assignments() for what they should hold."""
         ref = self.roblox_role_ref(branch_key)
         return ref.role_id if ref else None
 
@@ -149,9 +151,7 @@ class BranchDef:
     #: the branch server, so a member's branch is visible where everyone is.
     main_aux_discord_role_ids: list = field(default_factory=list)
     #: This branch's own Roblox group, if it has a separate one. When set, the
-    #: branch's role mappings resolve against it instead of the main group —
-    #: which is what makes holding a main-group role AND a branch role at the
-    #: same time possible, since one group can only ever grant one role.
+    #: branch's role mappings resolve against it instead of the main group.
     roblox_group_id: "int | None" = None
     #: True only for the sentinel "no branch" entry.
     is_na: bool = False
@@ -233,6 +233,11 @@ class RobloxConfig:
     #: 300/min per API-key owner and reconciling a member costs one call per
     #: role, so a small gap keeps bulk syncs under the ceiling.
     request_delay: float = 0.25
+    #: Whether members may take their Roblox role from a branch line. Only the
+    #: starting value: /aria branch-roles switches it at runtime, and that
+    #: choice is kept in data/roles_state.json, which wins while it exists.
+    #: See roles/state.py.
+    branch_roles_enabled: bool = True
 
 
 @dataclass
@@ -385,13 +390,19 @@ class Permission(str):
     SET_BRANCH = "SET_BRANCH"
     SET_STATUS = "SET_STATUS"
     SET_LOA = "SET_LOA"
+    #: Choose which line the member's Roblox role comes from (mainline or one
+    #: of their branches).
+    SET_PRIMARY_ROLE = "SET_PRIMARY_ROLE"
+    #: Switch branch-line Roblox roles on or off for everyone.
+    TOGGLE_BRANCH_ROLES = "TOGGLE_BRANCH_ROLES"
     FORCE_SYNC = "FORCE_SYNC"
     RESTRUCTURE_SHEET = "RESTRUCTURE_SHEET"
     ADMIN_INSPECT = "ADMIN_INSPECT"
 
     ALL = (
         REGISTER_SELF, VIEW_RECORD, SET_TIMEZONE, SET_RANK, SET_BRANCH,
-        SET_STATUS, SET_LOA, FORCE_SYNC, RESTRUCTURE_SHEET, ADMIN_INSPECT,
+        SET_STATUS, SET_LOA, SET_PRIMARY_ROLE, TOGGLE_BRANCH_ROLES,
+        FORCE_SYNC, RESTRUCTURE_SHEET, ADMIN_INSPECT,
     )
 
 
@@ -465,6 +476,11 @@ class RolesConfig:
     ranks: dict = field(default_factory=dict)        # key -> RankDef
     branches: dict = field(default_factory=dict)     # key -> BranchDef
     grantable_roles: dict = field(default_factory=dict)  # key -> GrantableRoleDef
+    #: Discord roles every registered member holds whatever their rank or
+    #: branch, by scope: {"MAIN": [role_id, ...], "BRANCH_KEY": [...]}. A
+    #: branch scope means that branch's own server, for every registered member
+    #: who is in it. A grantable role's remove list can cancel them.
+    general_roles: dict = field(default_factory=dict)
     #: Rank key assigned by /register. None = leave the new record's rank blank
     #: rather than guess. A blank rank sorts to the bottom of its section and
     #: synchronizes nothing, which is the safe state until this is supplied.
@@ -519,6 +535,51 @@ class RolesConfig:
             if branch.key.casefold() == needle:
                 return branch
         return None
+
+    # ── Branch membership ──
+
+    def normalize_branch_keys(self, keys):
+        """Canonical form of a set of branch keys.
+
+        De-duplicated, N/A dropped (it means "no branch", so it cannot sit next
+        to a real one), configured branches in configuration order, then any
+        unrecognised keys as given. Unknown keys are kept rather than dropped,
+        the same way an unknown rank is, so a typo on the sheet is reported
+        instead of silently erased.
+        """
+        wanted = []
+        for key in keys or ():
+            key = str(key).strip().upper()
+            if key and key != NA_BRANCH_KEY and key not in wanted:
+                wanted.append(key)
+        known = [key for key in self.branches if key in wanted]
+        unknown = [key for key in wanted if key not in self.branches]
+        return tuple(known + unknown)
+
+    def branches_of(self, branch_keys):
+        """BranchDefs a record belongs to, in configuration order.
+
+        A record in no configured branch belongs to N/A, so N/A's main-server
+        auxiliary roles still apply to it.
+        """
+        found = [
+            self.branches[key] for key in self.normalize_branch_keys(branch_keys)
+            if key in self.branches
+        ]
+        if found:
+            return found
+        na = self.branches.get(NA_BRANCH_KEY)
+        return [na] if na else []
+
+    def branches_display(self, branch_keys):
+        """Column G text: 'ECHELON, MEDICAL', or N/A for no branch."""
+        if not branch_keys:
+            na = self.branches.get(NA_BRANCH_KEY)
+            return na.display if na else ""
+        return BRANCH_SEPARATOR.join(
+            self.branches[key].display if key in self.branches else key
+            for key in branch_keys
+        )
 
     # ── Grantable roles ──
 
@@ -600,6 +661,18 @@ class RolesConfig:
                 shared.update(grantable.remove_discord_role_ids)
         return shared
 
+    # ── General roles ──
+
+    def general_role_ids(self, guild_id):
+        """Roles every registered member holds in one server."""
+        role_ids = set()
+        if not guild_id:
+            return role_ids
+        for scope, ids in self.general_roles.items():
+            if self._scope_guild_id(scope) == guild_id:
+                role_ids.update(ids)
+        return role_ids
+
     # ── Discord server resolution ──
 
     def branch_guild_ids(self):
@@ -635,39 +708,63 @@ class RolesConfig:
 
     # ── Roblox role resolution ──
 
-    def roblox_assignments(self, rank, branch_key):
-        """Every (group, role) a member of this rank+branch should hold.
+    def primary_line_options(self, rank, branch_keys, branch_lines_enabled=True):
+        """Branch lines a member could take their Roblox role from.
 
-        ADDITIVE: the "N/A" mapping is the baseline and is always included, then
-        the branch mapping is added on top when the member belongs to a branch.
-        So rank X in branch ECHELON holds both the rank's N/A role and its
-        ECHELON role.
+        The branches they belong to that map a Roblox role at their rank, in
+        configuration order. The mainline is always the alternative and is not
+        listed. Empty while branch lines are switched off.
+        """
+        if rank is None or not rank.syncs_roblox or not branch_lines_enabled:
+            return []
+        return [
+            branch.key for branch in self.branches_of(branch_keys)
+            if not branch.is_na and rank.roblox_role_ref(branch.key) is not None
+        ]
 
-        Each role resolves to a group: the ref's explicit group_id if given,
+    def effective_primary_line(self, rank, branch_keys, primary_line,
+                               branch_lines_enabled=True):
+        """The line actually used: the chosen branch line while it is still
+        available, otherwise the mainline (returned as "").
+
+        Falling back is what keeps a stale choice harmless — after leaving the
+        branch, after a rank change to one that branch does not map, or while
+        branch lines are switched off.
+        """
+        line = str(primary_line or "").strip().upper()
+        if line and line in self.primary_line_options(rank, branch_keys, branch_lines_enabled):
+            return line
+        return ""
+
+    def roblox_assignments(self, rank, branch_keys=(), primary_line="",
+                           branch_lines_enabled=True):
+        """The (group, role) a member of this rank should hold: at most one.
+
+        The rank's mappings are alternatives. A member holds the role of their
+        effective primary line — the mainline ("N/A" entry) by default, or a
+        branch entry they switched to with /set primary.
+
+        The role resolves to a group: the ref's explicit group_id if given,
         else the branch's own `roblox_group_id`, else the main group.
 
-        Returns [] when the rank has no Roblox equivalent — never a guess.
+        Returns [] when nothing is mapped for that line — never a guess.
         """
         if rank is None or not rank.syncs_roblox:
             return []
 
-        branch = self.branch(branch_key)
-        branch_key = branch.key if branch else NA_BRANCH_KEY
+        line = self.effective_primary_line(
+            rank, branch_keys, primary_line, branch_lines_enabled
+        )
+        if line:
+            ref = rank.roblox_role_ref(line)
+            resolved = self._resolve_roblox_ref(ref, self.branches.get(line), line)
+        else:
+            ref = rank.roblox_role_ref(NA_BRANCH_KEY)
+            resolved = (
+                self._resolve_roblox_ref(ref, None, NA_BRANCH_KEY) if ref else None
+            )
 
-        assignments = []
-
-        baseline = rank.roblox_role_ref(NA_BRANCH_KEY)
-        if baseline:
-            assignments.append(self._resolve_roblox_ref(baseline, None, NA_BRANCH_KEY))
-
-        if branch_key != NA_BRANCH_KEY:
-            specific = rank.roblox_role_ref(branch_key)
-            if specific:
-                assignments.append(
-                    self._resolve_roblox_ref(specific, branch, branch_key)
-                )
-
-        return [a for a in assignments if a is not None]
+        return [resolved] if resolved else []
 
     def _resolve_roblox_ref(self, ref, branch, source):
         group_id = ref.group_id
@@ -731,7 +828,8 @@ class RolesConfig:
         Roles outside this set are never added or removed, so manually assigned
         cosmetic roles survive synchronization. Auxiliary roles are included so
         that obsolete ones are cleaned up when a rank or branch changes, and so
-        are the roles a grantable role ADDS, so they come off when it is revoked.
+        are the roles a grantable role ADDS, so they come off when it is revoked,
+        and the general roles, so they come off when a record is removed.
 
         A grantable role's `remove_discord_role_ids` are deliberately NOT
         included: they only cancel roles that are already managed. Owning them
@@ -757,6 +855,8 @@ class RolesConfig:
             for grantable in self.grantable_roles.values():
                 if guild_id in self.grantable_guild_ids(grantable):
                     managed.update(grantable.add_discord_role_ids)
+
+        managed.update(self.general_role_ids(guild_id))
 
         return managed
 
@@ -889,9 +989,16 @@ def _build_rank(key, raw):
 
 def _build_branch(key, raw):
     key = str(key).strip().upper()
+    display = str(raw.get("display", key)).strip()
+    if "," in key or "," in display:
+        # Column G holds several branches separated by commas, so a comma
+        # inside one name would split it in two on the way back in.
+        print(f"[Roles] Branch {key!r}: commas are not allowed in a branch key "
+              f"or display name; they are removed.")
+        key, display = key.replace(",", ""), display.replace(",", "")
     return BranchDef(
         key=key,
-        display=raw.get("display", key),
+        display=display,
         discord_guild_id=_as_int(raw.get("discord_guild_id")),
         discord_roles_by_rank=_int_list_map(raw.get("discord_roles_by_rank")),
         main_aux_discord_role_ids=_int_list(raw.get("main_aux_discord_role_ids")),
@@ -1044,7 +1151,8 @@ def load(path=None):
     for key, branch_raw in (raw.get("branches") or {}).items():
         if str(key).startswith("_"):
             continue
-        cfg.branches[str(key).strip().upper()] = _build_branch(key, branch_raw)
+        branch = _build_branch(key, branch_raw)
+        cfg.branches[branch.key] = branch
 
     # The N/A branch is required by the data model; synthesize it if the config
     # forgot it, so "no branch" is always a valid, explicit state.
@@ -1057,6 +1165,16 @@ def load(path=None):
         grantable = _build_grantable(key, grantable_raw, cfg.branches)
         if grantable is not None:
             cfg.grantable_roles[grantable.key] = grantable
+
+    cfg.general_roles = _int_list_map(raw.get("general_roles"))
+    for scope in list(cfg.general_roles):
+        if scope == MAIN_GUILD_SCOPE:
+            continue
+        branch = cfg.branches.get(scope)
+        if branch is None or branch.is_na:
+            print(f"[Roles] General roles: scope {scope!r} is neither "
+                  f"{MAIN_GUILD_SCOPE} nor a configured branch; those roles are ignored.")
+            del cfg.general_roles[scope]
 
     default_rank = raw.get("default_registration_rank")
     if default_rank and not str(default_rank).startswith("_"):
@@ -1100,10 +1218,13 @@ def load(path=None):
     cfg.sync.removal_roblox_role_id = _as_int(cfg.sync.removal_roblox_role_id)
     cfg.permissions = _build_permissions(raw.get("permissions"))
 
+    cfg.roblox.branch_roles_enabled = bool(cfg.roblox.branch_roles_enabled)
+
     print(
         f"[Roles] Config loaded from {path}: "
         f"{len(cfg.ranks)} rank(s), {len(cfg.branches)} branch(es), "
-        f"{len(cfg.grantable_roles)} grantable role(s)."
+        f"{len(cfg.grantable_roles)} grantable role(s), "
+        f"{sum(len(ids) for ids in cfg.general_roles.values())} general role(s)."
     )
     return cfg
 

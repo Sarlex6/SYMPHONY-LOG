@@ -446,7 +446,7 @@ class SheetPoller:
         if change.record.revision <= change.previous.revision:
             return False
         human_fields = {"category", "username", "timezone", "rank_key",
-                        "branch_key", "status", "entry_date"}
+                        "branch_keys", "status", "entry_date", "primary_line"}
         return not (human_fields & set(change.fields))
 
     # ── Status ──

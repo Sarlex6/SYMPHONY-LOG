@@ -20,15 +20,18 @@
     "main_aux_discord_role_ids  extra MAIN-SERVER-ONLY roles this rank also grants.",
     "                       Auxiliary roles are never applied in branch servers.",
     "                       They are managed, so obsolete ones are removed on a rank change.",
-    "roblox_roles_by_branch { BRANCH_KEY: roblox_group_role_id }.",
-    "                       ADDITIVE, not alternatives. The \"N/A\" entry is the BASELINE and is",
-    "                       ALWAYS applied. A branch entry is applied ON TOP of it, so a member",
-    "                       of ECHELON receives both the N/A role and the ECHELON role.",
+    "roblox_roles_by_branch { LINE: roblox_group_role_id }.",
+    "                       ALTERNATIVES: a member holds exactly ONE of these, their primary",
+    "                       role. \"N/A\" is the MAINLINE and everyone's default. A branch entry",
+    "                       is that branch's line: a member of the branch may switch their",
+    "                       primary role to it with /set primary (unless branch lines are",
+    "                       disabled with /aria branch-roles). null = no role on that line at",
+    "                       this rank, so members of that branch stay on the mainline.",
     "                       An empty object means this rank has NO Roblox equivalent.",
     "",
-    "                       Applied with Open Cloud assignRole / unassignRole, so a member can",
-    "                       hold several roles in one group at once. Only roles configured here",
-    "                       are ever unassigned — anything granted for another reason survives.",
+    "                       Applied with Open Cloud assignRole / unassignRole. Only roles",
+    "                       configured here are ever unassigned — anything granted for another",
+    "                       reason survives.",
     "                       Every change is verified by re-reading the membership, because a key",
     "                       without group:write can return 200 without applying anything.",
     "",
@@ -37,9 +40,10 @@
     "                       or set branches.<KEY>.roblox_group_id once for that whole branch.",
     "universal              true for ranks that are not tied to one branch (Executive Team, CEO).",
     "                       A universal rank receives its discord_roles_by_rank roles in EVERY",
-    "                       branch server that maps the rank, whatever the member's own branch.",
-    "                       A normal rank only receives them in its own branch's server.",
-    "                       Discord only: Roblox branch roles still follow the member's branch.",
+    "                       branch server that maps the rank, whatever the member's branches.",
+    "                       A normal rank only receives them in its own branches' servers.",
+    "                       Discord only: a Roblox branch line still has to be one of the",
+    "                       member's own branches.",
     "syncs_roblox           defaults to true for normal ranks, false for special ranks."
   ],
   "ranks": {
@@ -510,15 +514,18 @@
 
   "_branches_README": [
     "One entry per branch, plus the required N/A entry for users with no branch.",
+    "A member can belong to SEVERAL branches at once (column G is a multi-select dropdown,",
+    "\"ECHELON, INTELLIGENCE\"). Branch keys and display names must not contain commas.",
     "discord_guild_id       that branch's own Discord server",
     "discord_roles_by_rank  { RANK_KEY: [role_id, ...] } applied inside that branch server.",
     "                       A single id is accepted too. Given to members of this branch,",
-    "                       and to holders of a universal rank whatever their branch.",
+    "                       and to holders of a universal rank whatever their branches.",
     "main_aux_discord_role_ids  MAIN-SERVER-ONLY roles granted by belonging to this branch.",
     "                       This is the branch half of the auxiliary mapping: it lives in the",
-    "                       MAIN server, not the branch server, so a member's branch is visible",
-    "                       in the one server everybody is in. Managed, so the old branch's",
-    "                       auxiliary roles come off automatically on a branch change.",
+    "                       MAIN server, not the branch server, so a member's branches are",
+    "                       visible in the one server everybody is in. A member of several",
+    "                       branches gets the auxiliary roles of each. Managed, so a left",
+    "                       branch's auxiliary roles come off automatically.",
     "                       Valid on N/A too, if unaffiliated members should carry a role."
   ],
   "branches": {
@@ -547,7 +554,8 @@
         "BRANCH_EXECUTIVE" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482547363514945622],
         "BRANCH_HEAD" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482627405511131227],
         "EXECUTIVE_TEAM" : [1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932421, 1482547363514945624],
-        "CHIEF-EXECUTIVE_OFFICER" : [1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932421, 1482547363527659702]
+        "CHIEF-EXECUTIVE_OFFICER" : [1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932421, 1482547363527659702],
+        "DEVELOPMENT_HEAD" : [1482630111827071057, 1482547363490037794, 1482547363490037795, 1482547363490037796, 1482547363490037797, 1482547363490037798, 1482547363082932422, 1482547363514945622]
       },
       "main_aux_discord_role_ids": [1375155240596275270]
     },
@@ -643,9 +651,9 @@
     "                         belong to that branch.",
     "add_discord_role_ids     roles granted on top of what the rank and branch already give.",
     "                         Managed, so they come off again when the role is revoked.",
-    "remove_discord_role_ids  roles the rank or branch would otherwise give in that server,",
-    "                         which this modifier cancels. Only subtracts from those roles:",
-    "                         listing a role no rank or branch grants has no effect.",
+    "remove_discord_role_ids  roles the rank, branch or general roles would otherwise give in",
+    "                         that server, which this modifier cancels. Only subtracts from",
+    "                         those roles: listing a role nothing grants has no effect.",
     "",
     "If one held grantable role adds a role that another one removes, the add wins.",
     "",
@@ -739,6 +747,22 @@
 
   },
 
+  "_general_roles_README": [
+    "Discord roles EVERY registered member holds, whatever their rank or branch.",
+    "Keyed by where they apply: \"MAIN\" for the main server, or a branch key for that",
+    "branch's own server (given there to every registered member who is in it, not only",
+    "to members of that branch). A grantable role can cancel one for a particular member",
+    "by listing it in its remove_discord_role_ids. Managed, so they are stripped when a",
+    "record is removed from the sheet. Existing members receive newly added ones on the",
+    "next /aria sync.",
+    "",
+    "Example:",
+    "  \"general_roles\": { \"MAIN\": [111111111111111111, 222222222222222222] }"
+  ],
+  "general_roles": {
+    "MAIN": [1375162268500623401, 1372346018716323840, 1372344597921009684, 1556342960709308566, 1372346090749169775, 1372342471182254160, 1541671870032777266, 1372346063717138562]
+  },
+
   "category_order": ["HIGH-RANK", "MID-RANK", "LOW-RANK"],
 
   "_default_registration_rank_README": [
@@ -765,7 +789,9 @@
   "roblox": {
     "group_id": 34399374,
     "api_base": "https://apis.roblox.com/cloud/v2",
-    "request_timeout": 15.0
+    "request_timeout": 15.0,
+    "_branch_roles_enabled_comment": "Whether members may switch their Roblox role to a branch line. Starting value only: /aria branch-roles changes it at runtime and that choice is kept in data/roles_state.json, which wins while it exists. Set it here too to make a decision survive a host that wipes data/.",
+    "branch_roles_enabled": true
   },
 
   "_registration_README": [
@@ -883,6 +909,18 @@
           { "allowed_relations": ["LOWER"], "allowed_categories": ["HIGH-RANK"] }
         ],
         "note": "pending the LOA data format definition. See roles/loa.py."
+      },
+      "SET_PRIMARY_ROLE": {
+        "grants": [
+          { "allowed_relations": ["SELF"] }
+        ],
+        "note": "anyone may choose their own Roblox primary role (mainline or one of their branch lines)."
+      },
+      "TOGGLE_BRANCH_ROLES": {
+        "grants": [
+          { "allowed_relations": ["SELF"], "min_rank_order": 14 }
+        ],
+        "note": "Executive Team and higher may switch branch-line Roblox roles on or off for everyone."
       },
       "FORCE_SYNC": {
         "min_rank_order": 12,

@@ -13,8 +13,9 @@ import discord
 from discord import app_commands
 
 from roles import config as roles_config
+from roles import state as roles_state
 from roles import timezones
-from roles.models import ActionContext, ActionOrigin, ActionStatus
+from roles.models import ActionContext, ActionOrigin, ActionResult, ActionStatus
 from roles.service import service
 
 # ── Presentation ─────────────────────────────────────────────────────────────
@@ -109,6 +110,30 @@ async def timezone_autocomplete(interaction, current):
     return [app_commands.Choice(name=o[:100], value=o) for o in options[:25]]
 
 
+async def primary_line_autocomplete(interaction, current):
+    """The lines the member being edited can actually choose from.
+
+    Display only: the service re-checks every choice, so a stale list can at
+    worst offer something that is then refused.
+    """
+    cfg = roles_config.current()
+    target = getattr(interaction.namespace, "user", None)
+    target_id = getattr(target, "id", None) or interaction.user.id
+    record = service.find_record(target_id)
+
+    choices = [app_commands.Choice(name="Mainline (N/A)", value="N/A")]
+    if record is not None:
+        rank = cfg.rank(record.rank_key)
+        for key in cfg.primary_line_options(
+                rank, record.branch_keys, roles_state.branch_roles_enabled(cfg)):
+            choices.append(app_commands.Choice(
+                name=f"{cfg.branches[key].display} line"[:100], value=key,
+            ))
+
+    needle = (current or "").casefold()
+    return [c for c in choices if needle in c.name.casefold()][:25]
+
+
 # ── Command registration ─────────────────────────────────────────────────────
 
 def register_commands(tree):
@@ -197,17 +222,60 @@ def register_commands(tree):
 
     # ── /set branch ──
 
-    @set_group.command(name="branch", description="Set a user's branch")
-    @app_commands.describe(user="The user to modify", branch="The branch to assign")
-    @app_commands.autocomplete(branch=branch_autocomplete)
+    @set_group.command(
+        name="branch",
+        description="Set a user's branches (replaces all of their current branches)",
+    )
+    @app_commands.describe(
+        user="The user to modify",
+        branch="A branch to assign, or N/A to remove them from every branch",
+        branch_2="Another branch they belong to (optional)",
+        branch_3="Another branch they belong to (optional)",
+        branch_4="Another branch they belong to (optional)",
+        branch_5="Another branch they belong to (optional)",
+    )
+    @app_commands.autocomplete(
+        branch=branch_autocomplete, branch_2=branch_autocomplete,
+        branch_3=branch_autocomplete, branch_4=branch_autocomplete,
+        branch_5=branch_autocomplete,
+    )
     async def set_branch_command(
         interaction: discord.Interaction,
         user: discord.Member,
         branch: str,
+        branch_2: str = None,
+        branch_3: str = None,
+        branch_4: str = None,
+        branch_5: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
-        result = await service.set_branch(
-            context_from(interaction), branch_input=branch, target_discord_id=user.id,
+        branches = [b for b in (branch, branch_2, branch_3, branch_4, branch_5) if b]
+        result = await service.set_branches(
+            context_from(interaction), branch_inputs=branches, target_discord_id=user.id,
+        )
+        await _respond(interaction, result)
+
+    # ── /set primary ──
+
+    @set_group.command(
+        name="primary",
+        description="Choose whether your Roblox role is your mainline or a branch-line role",
+    )
+    @app_commands.describe(
+        line="Mainline (N/A), or one of your branches that has a role at your rank",
+        user="Whose primary role to set (requires authorization; defaults to yourself)",
+    )
+    @app_commands.autocomplete(line=primary_line_autocomplete)
+    async def set_primary_command(
+        interaction: discord.Interaction,
+        line: str,
+        user: discord.Member = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        result = await service.set_primary_role(
+            context_from(interaction),
+            line_input=line,
+            target_discord_id=user.id if user else None,
         )
         await _respond(interaction, result)
 
@@ -344,6 +412,30 @@ def register_commands(tree):
         )
         await _respond(interaction, result)
 
+    # ── /aria branch-roles ──
+
+    @roles_group.command(
+        name="branch-roles",
+        description="Enable or disable branch-line Roblox roles for everyone",
+    )
+    @app_commands.describe(
+        setting="Disable moves everyone back to their mainline Roblox role and "
+                "stops anyone from switching",
+    )
+    @app_commands.choices(setting=[
+        app_commands.Choice(name="enable", value="enable"),
+        app_commands.Choice(name="disable", value="disable"),
+    ])
+    async def branch_roles_command(
+        interaction: discord.Interaction,
+        setting: app_commands.Choice[str],
+    ):
+        await interaction.response.defer(ephemeral=True)
+        result = await service.set_branch_roles_enabled(
+            context_from(interaction), enabled=setting.value == "enable",
+        )
+        await _respond(interaction, result)
+
     # ── /roles status ──
 
     @roles_group.command(
@@ -375,7 +467,8 @@ def register_commands(tree):
         summary = (
             f"Configuration reloaded: **{len(cfg.ranks)}** rank(s), "
             f"**{len(cfg.branches)}** branch(es), "
-            f"**{len(cfg.grantable_roles)}** grantable role(s)."
+            f"**{len(cfg.grantable_roles)}** grantable role(s), "
+            f"**{sum(len(ids) for ids in cfg.general_roles.values())}** general role(s)."
         )
         if missing:
             summary += "\n\n**Still missing:**\n" + "\n".join(f"• {m}" for m in missing)
@@ -388,6 +481,22 @@ def register_commands(tree):
             ),
             ephemeral=True,
         )
+
+    @tree.error
+    async def on_command_error(interaction: discord.Interaction, error):
+        # Every command defers first, so an exception escaping the service (a
+        # Sheets call that timed out, say) would otherwise leave the member
+        # watching "thinking..." until Discord gives up on it.
+        original = getattr(error, "original", error)
+        print(f"[Roles] /{interaction.command.qualified_name if interaction.command else '?'} "
+              f"failed: {type(original).__name__}: {original}")
+        try:
+            await _respond(interaction, ActionResult.error(
+                f"The operation failed: {type(original).__name__}: {original}. "
+                f"Check the record with /aria whois before trying again."
+            ))
+        except discord.HTTPException:
+            pass
 
     tree.add_command(set_group)
     tree.add_command(roles_group)
