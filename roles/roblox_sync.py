@@ -1,8 +1,10 @@
 """Roblox group role synchronization via Open Cloud v2 (multi-role model).
 
-Mapping is `rank + branch -> Roblox group roles`, additively: the rank's "N/A"
-entry is the baseline and is always applied, and the branch entry is applied on
-top of it. A member can therefore hold several group roles at once.
+Mapping is `rank + primary line -> ONE Roblox group role`. Each rank maps a
+mainline role (its "N/A" entry) and optionally a role per branch. A member holds
+exactly one of them, their primary role: the mainline by default, or the line
+of one of their branches if they switched to it with /set primary and branch
+lines are enabled. Every other managed role is unassigned.
 
 API model
 ---------
@@ -43,6 +45,7 @@ import asyncio
 import aiohttp
 
 from roles import config as roles_config
+from roles import state as roles_state
 from roles.models import SyncTarget
 
 from roles.discord_sync import SyncOutcome
@@ -53,20 +56,21 @@ PROTECTED_ROLE_NAMES = ("Owner", "Member", "Guest")
 
 
 class RobloxSynchronizer:
-    """Applies a record's rank+branch mapping to Roblox group roles."""
+    """Applies a record's rank + primary line to Roblox group roles."""
 
     # ── Desired state ──
 
     def desired_assignments(self, record, cfg=None):
-        """Every (group, role) this record should hold.
+        """The (group, role) this record should hold — at most one.
 
-        Additive: the rank's N/A role is always included, plus its branch role
-        when the member belongs to a branch. Empty means "do not touch Roblox",
-        never "remove them from the group".
+        Empty means "do not touch Roblox", never "remove them from the group".
         """
         cfg = cfg or roles_config.current()
         rank = cfg.rank(record.rank_key)
-        return cfg.roblox_assignments(rank, record.branch_key)
+        return cfg.roblox_assignments(
+            rank, record.branch_keys, record.primary_line,
+            roles_state.branch_roles_enabled(cfg),
+        )
 
     def desired_by_group(self, record, cfg=None):
         """{group_id: {role_id, ...}} the record should hold."""
@@ -209,12 +213,21 @@ class RobloxSynchronizer:
         else:
             desired_by_group = self.desired_by_group(record, cfg)
             groups = set(desired_by_group)
+            if groups:
+                # Also visit every other group the configuration manages, so a
+                # role from the previous line is removed even when that line
+                # lived in a different group.
+                groups |= cfg.managed_roblox_groups()
 
         if not groups:
+            line = cfg.effective_primary_line(
+                rank, record.branch_keys, record.primary_line,
+                roles_state.branch_roles_enabled(cfg),
+            ) or roles_config.NA_BRANCH_KEY
             return [SyncOutcome(
                 target, True,
-                f"No Roblox roles mapped for {rank.key} + branch "
-                f"{record.branch_key or 'N/A'}; Roblox untouched.",
+                f"No Roblox role mapped for {rank.key} on the {line} line; "
+                f"Roblox untouched.",
             )]
 
         outcomes = []
@@ -518,9 +531,9 @@ class RobloxSynchronizer:
 
             if rank.roblox_role_ref(roles_config.NA_BRANCH_KEY) is None:
                 problems.append(
-                    f"Rank {rank.key}: no \"N/A\" baseline role. The N/A entry is "
-                    f"always applied, so without it branch members receive only "
-                    f"their branch role."
+                    f"Rank {rank.key}: no \"N/A\" mainline role. The mainline is "
+                    f"every member's default primary role, so members of this rank "
+                    f"get no Roblox role unless they switch to a branch line."
                 )
 
             for branch in cfg.branches.values():
@@ -528,8 +541,8 @@ class RobloxSynchronizer:
                     continue
                 if rank.roblox_role_ref(branch.key) is None:
                     problems.append(
-                        f"Rank {rank.key} + branch {branch.key}: no branch Roblox "
-                        f"role mapped (the N/A baseline still applies)."
+                        f"Rank {rank.key} + branch {branch.key}: no branch-line "
+                        f"Roblox role mapped (members stay on the mainline)."
                     )
 
         return problems

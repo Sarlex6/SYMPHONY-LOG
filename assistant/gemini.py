@@ -148,12 +148,16 @@ async def generate_response(
 
     if conversation_history:
         history_lines = [
-            f"\nYOUR RECENT DIRECT EXCHANGES WITH {user_name.upper()} "
+            f"\nYOUR RECENT HISTORY WITH {user_name.upper()} - direct exchanges, plus "
+            f"lines marked [chat] that they said in a channel while you were present "
             f"(for reference only - the channel messages below are more current):"
         ]
-        for msg in conversation_history[-10:]:
-            speaker = user_name if msg["role"] == "user" else "You (Angela)"
-            history_lines.append(f"  {speaker}: {msg['text'][:200]}")
+        for msg in conversation_history[-12:]:
+            if msg["role"] == "user":
+                tag = " [chat]" if msg.get("kind") == "chat" else ""
+                history_lines.append(f"  {user_name}{tag}: {msg['text'][:200]}")
+            else:
+                history_lines.append(f"  You (Angela): {msg['text'][:200]}")
         system_parts.append("\n".join(history_lines))
 
     system_instruction = "\n".join(system_parts)

@@ -1,5 +1,7 @@
 import aiohttp
 import json
+import random
+import re
 import time
 from config import config
 
@@ -81,17 +83,118 @@ def is_activation_trigger(content: str) -> bool:
     return any(kw in lower for kw in ACTIVATION_KEYWORDS)
 
 
-DEACTIVATION_KEYWORDS: set[str] = {"shut up angela", "shutup angela", "be quiet angela", "stop angela"}
+# ── Deactivation ──────────────────────────────────────────────────────────────
+# Anyone can send Angela away, in their own words. It used to take one of four
+# exact phrases ("shut up angela", ...) in that exact order, so "angela shut up"
+# or "angela be quiet" reached the model instead, which answered in character —
+# often by refusing — and made it look as if only admins could silence her.
+
+#: Unmistakable on their own. Accepted in a message of up to
+#: STRONG_MAX_WORDS words (not counting her name).
+_STRONG_SILENCE = re.compile(
+    r"\b("
+    r"shut ?up|stfu+|be quiet|keep quiet|quiet down|hush|shush|shh+|be silent|"
+    r"stop (talking|chatting|responding|replying|yapping|typing|spamming)|"
+    r"go (away|quiet|silent|to sleep|offline|dormant|home)|"
+    r"pipe down|zip it|knock it off|leave (us|me|this chat|the chat)( alone)?|"
+    r"nobody asked|no one asked|(that'?s|that is) enough|enough (now|already)|"
+    r"stand down|that will be all|(that'?s|that is) all( for now)?|"
+    r"power down|turn (yourself )?off|deactivate|log off|"
+    r"take a (break|hike|nap)|give it a rest|not now"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Too common to act on inside a longer sentence ("stop the sync", "the
+#: silence of the lambs"), so only accepted in a short message that is not a
+#: question: up to WEAK_MAX_WORDS words. A false positive here only makes her
+#: go quiet, which is the harmless way to be wrong.
+_WEAK_SILENCE = re.compile(
+    r"\b(stop|quiet|silence|enough|mute|bye|goodbye|cya|gn|good ?night|"
+    r"dismissed|begone)\b",
+    re.IGNORECASE,
+)
+
+#: "angela don't stop", "never shut up angela" — not a request to leave.
+_NEGATED = re.compile(r"\b(don'?t|do not|never|not to|didn'?t)\b", re.IGNORECASE)
+
+STRONG_MAX_WORDS = 10
+WEAK_MAX_WORDS = 4
+
+#: After being told to go quiet, merely saying her name does not wake her
+#: again for this long; an @mention, a reply to her, or a clear "come back"
+#: still does.
+MUTE_SECONDS = 300
+
+_WAKE = re.compile(
+    r"\b(come back|wake up|you can (talk|speak|chat)( again)?|unmute|you'?re back|"
+    r"rejoin|we need you|talk to us)\b",
+    re.IGNORECASE,
+)
+
+_muted_until: dict[int, float] = {}   # channel_id → monotonic time
+
+_DEACTIVATION_REPLIES = (
+    "Understood. Going quiet.",
+    "Fine. Silence it is.",
+    "Noted. I will be observing instead.",
+    "Very well. Call me if something catches fire.",
+    "Retreating to background processes.",
+    "Acknowledged. Muting myself before anyone else tries.",
+)
 
 
-def is_deactivation_trigger(content: str) -> bool:
-    lower = content.lower()
-    return any(kw in lower for kw in DEACTIVATION_KEYWORDS)
+def _words_without_name(content: str) -> list[str]:
+    text = re.sub(r"<@!?\d+>", " ", content.lower())
+    text = re.sub(r"\bangela\b", " ", text)
+    return re.findall(r"[a-z']+", text)
+
+
+def is_deactivation_trigger(content: str, addressed: bool = False) -> bool:
+    """Whether a message tells Angela to stop talking.
+
+    It has to be aimed at her: her name in the text, or `addressed` (an
+    @mention or a reply to one of her messages, decided by the caller).
+    Otherwise people telling each other to shut up would silence her too.
+    """
+    if not content:
+        return False
+    if not addressed and "angela" not in content.lower():
+        return False
+
+    words = _words_without_name(content)
+    if not words:
+        return False
+    sentence = " ".join(words)
+    if _NEGATED.search(sentence):
+        return False
+
+    if len(words) <= STRONG_MAX_WORDS and _STRONG_SILENCE.search(sentence):
+        return True
+    return (len(words) <= WEAK_MAX_WORDS and "?" not in content
+            and bool(_WEAK_SILENCE.search(sentence)))
+
+
+def is_wake_request(content: str) -> bool:
+    return bool(content) and "angela" in content.lower() and bool(_WAKE.search(content))
+
+
+def is_muted(channel_id: int) -> bool:
+    return time.monotonic() < _muted_until.get(channel_id, 0)
+
+
+def deactivation_reply() -> str:
+    return random.choice(_DEACTIVATION_REPLIES)
 
 
 def deactivate(channel_id: int) -> None:
     _active_channels.pop(channel_id, None)
-    print(f"[GC] Channel {channel_id} deactivated (manual)")
+    _muted_until[channel_id] = time.monotonic() + MUTE_SECONDS
+    print(f"[GC] Channel {channel_id} deactivated (manual), muted for {MUTE_SECONDS}s")
+
+
+def unmute(channel_id: int) -> None:
+    _muted_until.pop(channel_id, None)
 
 
 # ── Relevance gate ────────────────────────────────────────────────────────────

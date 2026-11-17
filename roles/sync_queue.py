@@ -77,7 +77,7 @@ class SyncJob:
                 "roblox_id": self.snapshot.roblox_id,
                 "username": self.snapshot.username,
                 "rank_key": self.snapshot.rank_key,
-                "branch_key": self.snapshot.branch_key,
+                "branch_keys": list(self.snapshot.branch_keys),
             }
         return data
 
@@ -94,7 +94,11 @@ class SyncJob:
                 # "discord_username" is the key older persisted jobs used.
                 username=raw.get("username") or raw.get("discord_username", ""),
                 rank_key=raw.get("rank_key", ""),
-                branch_key=raw.get("branch_key", ""),
+                # "branch_key" (a single key) is what older persisted jobs used.
+                branch_keys=tuple(
+                    raw.get("branch_keys")
+                    or ([raw["branch_key"]] if raw.get("branch_key") else [])
+                ),
             )
 
         if data.get("removal") and snapshot is None:

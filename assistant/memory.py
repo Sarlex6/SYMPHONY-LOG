@@ -7,7 +7,11 @@ from collections import defaultdict
 from config import config
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-MAX_RECENT_MESSAGES = 20       # Full messages kept per user
+# History is gathered two ways: direct exchanges (someone @mentions or replies
+# to Angela, and she answers), and everything people say in a channel while
+# she is active there (kind "chat"). The second is most of it, so the window is
+# wider than a direct-only history would need.
+MAX_RECENT_MESSAGES = 30       # Full messages kept per user
 MEMORY_EXPIRY_DAYS = 7         # How long profiles persist (longer now since they're useful)
 MAX_SUMMARY_LENGTH = 500       # Characters per raw summary fallback
 SAVE_INTERVAL_MINUTES = 5      # How often to auto-save to disk
@@ -110,10 +114,16 @@ def _mark_dirty():
 
 # ── Core memory functions ────────────────────────────────────────────────────
 
-def add_message(user_id, role, text):
+#: Entry kinds. Entries written before kinds existed have none and read as direct.
+KIND_DIRECT = "direct"   # an exchange with Angela herself
+KIND_CHAT = "chat"       # said in a channel while Angela was active there
+
+
+def add_message(user_id, role, text, kind=KIND_DIRECT):
     conversation_history[user_id].append({
         "role": role,
         "text": text,
+        "kind": kind,
         "timestamp": datetime.utcnow().isoformat(),
     })
 
@@ -143,16 +153,25 @@ def get_profile_context(user_id, user_name):
     """Get the messages to use for profiling and reset the counter."""
     messages = []
     for msg in conversation_history[user_id]:
-        speaker = user_name if msg["role"] == "user" else "Angela"
-        messages.append(f"{speaker}: {msg['text'][:300]}")
+        if msg["role"] == "user":
+            where = " (in group chat)" if msg.get("kind") == KIND_CHAT else ""
+            messages.append(f"{user_name}{where}: {_strip_speaker(msg['text'])[:300]}")
+        else:
+            messages.append(f"Angela: {msg['text'][:300]}")
 
     _message_counts[user_id] = 0
     return messages
 
 
+def _strip_speaker(text):
+    """User entries are stored as 'Name: text'; the caller adds its own label."""
+    head, sep, rest = text.partition(": ")
+    return rest if sep and len(head) <= 40 else text
+
+
 def get_history(user_id):
     return [
-        {"role": msg["role"], "text": msg["text"]}
+        {"role": msg["role"], "text": msg["text"], "kind": msg.get("kind", KIND_DIRECT)}
         for msg in conversation_history[user_id]
     ]
 
@@ -210,7 +229,12 @@ def _basic_trim(user_id):
 
     summary_lines = []
     for msg in overflow:
-        speaker = "User" if msg["role"] == "user" else "Angela"
+        if msg["role"] != "user":
+            speaker = "Angela"
+        elif msg.get("kind") == KIND_CHAT:
+            speaker = "User (in chat)"
+        else:
+            speaker = "User"
         text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
         summary_lines.append(f"{speaker}: {text}")
 
@@ -259,7 +283,10 @@ async def generate_profile(user_id, user_name, messages):
     if existing_profile:
         prompt_parts.append(f"\nEXISTING PROFILE (update/merge with new info):\n{existing_profile}\n")
 
-    prompt_parts.append(f"\nRECENT CONVERSATIONS WITH {user_name.upper()}:\n")
+    prompt_parts.append(
+        f"\nRECENT MESSAGES FROM {user_name.upper()} — direct exchanges with Angela, "
+        f"and lines marked (in group chat) that they said in a channel she was present in:\n"
+    )
     prompt_parts.append("\n".join(messages[-20:]))  # Last 20 messages max
     prompt_parts.append("\n\nGenerate the updated profile now. Output ONLY the profile text, nothing else.")
 

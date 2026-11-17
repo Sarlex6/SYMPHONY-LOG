@@ -11,7 +11,7 @@ Column map (1-indexed, matching gspread):
     D  4   IDENTIFICATION     managed ("Roblox (discord)" usernames — display only)
     E  5   TIMEZONE           managed
     F  6   RANK               managed (dropdown / data validation)
-    G  7   BRANCH             managed (dropdown / data validation)
+    G  7   BRANCH             managed (multi-select dropdown, "ECHELON, MEDICAL")
     H  8   NOTES              carried, never authored — see MOVE_NOTES_WITH_RECORD
     I  9   design only        NEVER WRITTEN
     J  10  STATUS             managed
@@ -116,8 +116,9 @@ COL_TECH_REVISION = 22       # V — monotonic counter, bumped on every system w
 COL_TECH_LOA = 23            # W — opaque LOA payload; format TBD (see loa.py)
 COL_TECH_SOURCE = 24         # X — SYSTEM / MANUAL, provenance of the last change
 COL_TECH_GRANTS = 25         # Y — grantable role keys held, comma-separated
+COL_TECH_PRIMARY_LINE = 26   # Z — Roblox primary line: a branch key, or blank for mainline
 
-TECH_COL_END = 25  # Y
+TECH_COL_END = 26  # Z
 
 TECH_HEADERS = {
     COL_TECH_DISCORD_ID: "DISCORD_ID",
@@ -130,9 +131,10 @@ TECH_HEADERS = {
     COL_TECH_LOA: "LOA",
     COL_TECH_SOURCE: "SOURCE",
     COL_TECH_GRANTS: "GRANTS",
+    COL_TECH_PRIMARY_LINE: "PRIMARY_LINE",
 }
 
-#: Every column the system reads in a poll cycle: A..Y. Cheaper as one range.
+#: Every column the system reads in a poll cycle: A..Z. Cheaper as one range.
 READ_COL_START = 1
 READ_COL_END = TECH_COL_END
 
@@ -149,7 +151,7 @@ def col_letter(index):
 
 
 def a1_range(first_row, last_row, first_col=READ_COL_START, last_col=READ_COL_END):
-    """Build an A1 range string, e.g. 'A10:Y112'."""
+    """Build an A1 range string, e.g. 'A10:Z112'."""
     return f"{col_letter(first_col)}{first_row}:{col_letter(last_col)}{last_row}"
 
 

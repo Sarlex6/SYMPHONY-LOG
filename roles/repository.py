@@ -64,12 +64,29 @@ def _resolve_rank_key(raw, cfg):
     return rank.key if rank else raw.strip().upper()
 
 
-def _resolve_branch_key(raw, cfg):
-    """Same as _resolve_rank_key, for column G."""
+def _resolve_branch_keys(raw, cfg):
+    """Column G holds one or more branch display strings, comma-separated —
+    the format a multi-select dropdown writes. Each is resolved the same way
+    _resolve_rank_key resolves a rank, and the set is put in canonical form.
+
+    "N/A", a blank cell and no recognisable branch all read back as ().
+    """
     if not raw:
-        return ""
-    branch = cfg.branch_by_display(raw) or cfg.branch(raw)
-    return branch.key if branch else raw.strip().upper()
+        return ()
+    keys = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        branch = cfg.branch_by_display(part) or cfg.branch(part)
+        keys.append(branch.key if branch else part.upper())
+    return cfg.normalize_branch_keys(keys)
+
+
+def _resolve_primary_line(raw):
+    """Technical column Z. Blank and "N/A" both mean the mainline."""
+    line = str(raw or "").strip().upper()
+    return "" if line in ("", roles_config.NA_BRANCH_KEY) else line
 
 
 def row_to_record(row, row_number, cfg=None):
@@ -82,7 +99,7 @@ def row_to_record(row, row_number, cfg=None):
         username=_cell(row, columns.COL_IDENTIFICATION),
         timezone=_cell(row, columns.COL_TIMEZONE),
         rank_key=_resolve_rank_key(_cell(row, columns.COL_RANK), cfg),
-        branch_key=_resolve_branch_key(_cell(row, columns.COL_BRANCH), cfg),
+        branch_keys=_resolve_branch_keys(_cell(row, columns.COL_BRANCH), cfg),
         notes=_cell(row, columns.COL_NOTES),
         status=Status.parse(_cell(row, columns.COL_STATUS)),
         entry_date=_cell(row, columns.COL_ENTRY_DATE),
@@ -96,6 +113,7 @@ def row_to_record(row, row_number, cfg=None):
         revision=_as_int(_cell(row, columns.COL_TECH_REVISION)),
         loa_raw=_cell(row, columns.COL_TECH_LOA),
         grants=parse_grants(_cell(row, columns.COL_TECH_GRANTS)),
+        primary_line=_resolve_primary_line(_cell(row, columns.COL_TECH_PRIMARY_LINE)),
         source=_parse_enum(ChangeSource, _cell(row, columns.COL_TECH_SOURCE), ChangeSource.MANUAL),
     )
 
@@ -113,13 +131,13 @@ def record_to_cells(record, row_number, cfg, include_notes=None, write_category=
     """Every cell for one record at one row.
 
     Column F and G are written as the configured *display* strings so they match
-    the dropdown; the internal key stays in the record.
+    the dropdown; the internal keys stay in the record. Column G joins several
+    branches with ", ", as a multi-select dropdown does.
     """
     rank = cfg.rank(record.rank_key)
-    branch = cfg.branch(record.branch_key)
 
     rank_display = rank.display if rank else record.rank_key
-    branch_display = branch.display if branch else record.branch_key
+    branch_display = cfg.branches_display(record.branch_keys)
     category = layout.effective_category(record, cfg)
 
     values = {
@@ -144,6 +162,7 @@ def record_to_cells(record, row_number, cfg, include_notes=None, write_category=
         columns.COL_TECH_LOA: record.loa_raw,
         columns.COL_TECH_SOURCE: record.source.value,
         columns.COL_TECH_GRANTS: format_grants(record.grants),
+        columns.COL_TECH_PRIMARY_LINE: record.primary_line,
     }
 
     # Notes are never authored by the system, but they have to travel with the
@@ -195,15 +214,17 @@ class RecordChange:
         if self.kind in (RecordChange.ADDED, RecordChange.REMOVED):
             return True
         return bool(
-            {"rank_key", "branch_key", "discord_id", "roblox_id", "grants"} & set(self.fields)
+            {"rank_key", "branch_keys", "discord_id", "roblox_id", "grants",
+             "primary_line"} & set(self.fields)
         )
 
 
 #: Fields compared when detecting a manual edit. Excludes technical bookkeeping
 #: so the system's own writes do not read back as user changes.
 _COMPARED_FIELDS = (
-    "category", "username", "timezone", "rank_key", "branch_key",
+    "category", "username", "timezone", "rank_key", "branch_keys",
     "status", "entry_date", "discord_id", "roblox_id", "loa_raw", "grants",
+    "primary_line",
 )
 
 
@@ -380,6 +401,36 @@ class PersonnelRepository:
 
         await self._apply_layout(working, cfg)
         return self._by_uid.get(record.record_uid, record)
+
+    async def save_records(self, records, mark_system=True):
+        """Persist several records in ONE layout pass.
+
+        save_record rewrites the whole managed area, so calling it once per
+        record would cost a full sheet write each. Returns the saved records.
+
+        Caller must hold `gateway.write_lock`.
+        """
+        if not records:
+            return []
+        cfg = roles_config.current()
+
+        prepared = {}
+        for record in records:
+            record = record.with_changes(revision=record.revision + 1)
+            if mark_system:
+                record = record.with_changes(
+                    verification=VERIFICATION_SYSTEM_MARKER,
+                    source=ChangeSource.SYSTEM,
+                )
+            if not record.record_uid:
+                record = record.with_changes(record_uid=new_record_uid())
+            prepared[record.record_uid] = record
+
+        working = [r for r in self.live_records() if r.record_uid not in prepared]
+        working.extend(prepared.values())
+
+        await self._apply_layout(working, cfg)
+        return [self._by_uid.get(uid, record) for uid, record in prepared.items()]
 
     async def delete_record(self, record):
         """Remove a record and close the gap it leaves.
@@ -621,6 +672,9 @@ class PersonnelRepository:
                 self._footer_row,
             )
         if cfg.branches:
+            # Multi-select: a member can belong to several branches. The Sheets
+            # API cannot switch "Allow multiple selections" on, so that one
+            # setting is made by hand — see set_dropdown_values.
             await self.gateway.set_dropdown_values(
                 columns.COL_BRANCH,
                 [b.display for b in cfg.branches.values()],
@@ -641,6 +695,10 @@ class PersonnelRepository:
             "misplaced": layout.find_misplaced(records, cfg),
             "duplicates": layout.find_duplicates(records),
             "unknown_ranks": layout.unknown_ranks(records, cfg),
+            "unknown_branches": [
+                r for r in records
+                if any(key not in cfg.branches for key in r.branch_keys)
+            ],
             "unknown_grants": [
                 r for r in records
                 if any(cfg.grantable(key) is None for key in r.grants)

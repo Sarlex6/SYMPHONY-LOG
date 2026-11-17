@@ -6,7 +6,7 @@ from assistant.memory import (
     add_message, get_history, get_memory_summary, cleanup_memories,
     load_from_disk, save_to_disk, SAVE_INTERVAL_MINUTES,
     should_update_profile, get_profile_context, generate_profile,
-    user_profiles,
+    user_profiles, KIND_CHAT,
 )
 from assistant.knowledge import load_knowledge
 import assistant.gc as gc_mod
@@ -167,32 +167,76 @@ async def on_message(message):
     # Check active state BEFORE recording the message so the timeout isn't reset prematurely
     channel_id = message.channel.id
     channel_is_active = gc_mod.is_active(channel_id) if in_allowed_guild else False
+    addressed = _should_respond(message)
 
-    # Deactivation command — works even before recording the message
-    if in_allowed_guild and channel_is_active and gc_mod.is_deactivation_trigger(message.content):
-        gc_mod.deactivate(channel_id)
-        await message.channel.send("Understood. Going quiet.")
+    # Deactivation — anyone may send her away, in their own words, by name, by
+    # @mention or by replying to her. Checked before anything else so the
+    # request itself never reaches the model to be argued with.
+    if gc_mod.is_deactivation_trigger(message.content, addressed=addressed):
+        if in_allowed_guild:
+            gc_mod.deactivate(channel_id)
+        # Acknowledge only when she was actually talking or was spoken to;
+        # answering a passing "shut up angela" would be the opposite of quiet.
+        if channel_is_active or addressed:
+            await message.channel.send(gc_mod.deactivation_reply())
         return
 
     if in_allowed_guild:
         gc_mod.record_message(channel_id)
 
     # ── Path 1: Directly mentioned or replied to → targeted response ─────────
-    if _should_respond(message):
+    if addressed:
+        if in_allowed_guild:
+            gc_mod.unmute(channel_id)
         await _handle_direct_response(message)
         return
 
     # ── Path 2: GC auto-respond (unprompted) ────────────────────────────────
     if in_allowed_guild:
         if channel_is_active:
+            _remember_chat(message)
             # Active — participate naturally within cooldown limits
             if (not gc_mod.is_on_cooldown(channel_id)
                     and gc_mod.get_new_message_count(channel_id) >= gc_mod.GC_MIN_NEW_MESSAGES):
                 await _handle_gc_response(message)
-        elif gc_mod.is_activation_trigger(message.content):
-            # Inactive but keyword detected — wake up and respond immediately
+        elif gc_mod.is_activation_trigger(message.content) and (
+                not gc_mod.is_muted(channel_id) or gc_mod.is_wake_request(message.content)):
+            # Inactive but keyword detected — wake up and respond immediately.
+            # Recently told to go quiet: only an explicit "come back" counts.
+            gc_mod.unmute(channel_id)
             gc_mod.activate(channel_id)
+            _remember_chat(message)
             await _handle_gc_response(message, force=True)
+
+
+def _readable(message):
+    """Message text with user mentions turned into display names."""
+    content = message.content or ""
+    for user in message.mentions:
+        content = content.replace(f"<@{user.id}>", f"@{user.display_name}")
+        content = content.replace(f"<@!{user.id}>", f"@{user.display_name}")
+    return content.strip()
+
+
+def _remember_chat(message):
+    """Add what someone said in a channel Angela is active in to their history.
+
+    This is where most of what she knows about people comes from now: she reads
+    the whole conversation while active, not just the messages addressed to
+    her, so their history and profile are built from everything they say while
+    she is there. Saved by the periodic save loop rather than per message.
+    """
+    text = _readable(message)
+    if not text or text.startswith(("/", "!")):
+        return
+
+    user_id = message.author.id
+    user_name = message.author.display_name
+    add_message(user_id, "user", f"{user_name}: {text[:500]}", kind=KIND_CHAT)
+
+    if should_update_profile(user_id):
+        profile_messages = get_profile_context(user_id, user_name)
+        bot.loop.create_task(_run_profile_update(user_id, user_name, profile_messages))
 
 
 async def _try_role_management(message, user_text):
@@ -388,7 +432,8 @@ async def _handle_profile_command(message):
                 await message.reply("Profile generation failed. Try again later.", mention_author=False)
         else:
             await message.reply(
-                f"No data on **{target.display_name}** — they haven't talked to me yet.",
+                f"No data on **{target.display_name}** — they haven't talked to me, "
+                f"or in a channel I was active in, yet.",
                 mention_author=False,
             )
 

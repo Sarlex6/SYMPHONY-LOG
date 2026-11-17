@@ -1,10 +1,11 @@
 """Discord role synchronization.
 
-One direction only: the sheet's rank and branch decide the member's roles.
+One direction only: the sheet's rank and branches decide the member's roles.
 Nothing observed on Discord is ever written back to the sheet.
 
-    rank change            -> main-server role
-    rank + branch change   -> branch-server role
+    rank change              -> main-server role
+    rank + branches change   -> branch-server roles, in every branch server
+                                the member belongs to
 
 Only roles listed in the configuration are touched. Any other role a member has
 — cosmetic, self-assigned, from an unrelated bot — is left exactly as it is.
@@ -81,12 +82,13 @@ class DiscordSynchronizer:
         Role layout:
             main server    primary rank role
                          + auxiliary roles from the rank
-                         + auxiliary roles from the branch
+                         + auxiliary roles from EVERY branch the member is in
             branch server  that branch's roles for the rank — but only if the
-                           member belongs to the branch, or the rank is universal
+                           member belongs to that branch, or the rank is universal
+            any server     the general roles configured for it
 
         Auxiliary roles are main-server-only by design, so a member's rank and
-        branch are both visible in the one server everybody is in.
+        branches are all visible in the one server everybody is in.
 
         Grantable roles are applied last, on top of that foundation:
 
@@ -105,23 +107,24 @@ class DiscordSynchronizer:
             # a rank string is not in the config yet would be destructive.
             return set(), set()
 
-        branch = cfg.branch(record.branch_key)
+        member_of = {branch.key for branch in cfg.branches_of(record.branch_keys)}
 
         if guild_id == cfg.discord.main_guild_id:
             if rank.main_discord_role_id:
                 desired.add(rank.main_discord_role_id)
             desired.update(rank.main_aux_discord_role_ids)
-            if branch:
+            for branch in cfg.branches_of(record.branch_keys):
                 desired.update(branch.main_aux_discord_role_ids)
 
         for candidate in cfg.branches.values():
             if not candidate.discord_guild_id or candidate.discord_guild_id != guild_id:
                 continue
-            # A normal rank is only recognized in its own branch's server. A
+            # A normal rank is only recognized in its own branches' servers. A
             # universal rank is recognized in every branch server that maps it.
-            belongs = branch is not None and candidate.key == branch.key
-            if belongs or rank.universal:
+            if candidate.key in member_of or rank.universal:
                 desired.update(candidate.discord_roles_for(rank.key))
+
+        desired.update(cfg.general_role_ids(guild_id))
 
         added, suppressed = cfg.grant_adjustments(record.grants, guild_id)
         desired = (desired - suppressed) | added
@@ -185,10 +188,12 @@ class DiscordSynchronizer:
 
         return outcomes
 
-    async def _sync_guild(self, record, target, guild_id, cfg, dry_run, strip=False):
+    async def _find_member(self, record, target, guild_id):
+        """(guild, member, None), or (guild, None, outcome) when there is nobody
+        to synchronize in that server — which is not necessarily a failure."""
         guild = self.client.get_guild(guild_id)
         if guild is None:
-            return SyncOutcome(
+            return None, None, SyncOutcome(
                 target, False,
                 f"Bot is not in guild {guild_id} (or the guild is unavailable).",
                 retryable=True,
@@ -200,7 +205,7 @@ class DiscordSynchronizer:
             # Every sync visits every branch server, and most people are in one
             # or two of them — this is what keeps that from costing a failed
             # API lookup per server, per person.
-            return SyncOutcome(
+            return guild, None, SyncOutcome(
                 target, True,
                 f"{record.discord_id} is not a member of {guild.name}; skipped.",
             )
@@ -209,19 +214,26 @@ class DiscordSynchronizer:
                 member = await guild.fetch_member(record.discord_id)
             except discord.NotFound:
                 # Not an error: the person simply is not in this server.
-                return SyncOutcome(
+                return guild, None, SyncOutcome(
                     target, True,
                     f"{record.discord_id} is not a member of {guild.name}; skipped.",
                 )
             except discord.Forbidden:
-                return SyncOutcome(
+                return guild, None, SyncOutcome(
                     target, False,
                     f"Missing permission to read members in {guild.name}.",
                 )
             except discord.HTTPException as exc:
-                return SyncOutcome(
+                return guild, None, SyncOutcome(
                     target, False, f"Member lookup failed: {exc}", retryable=True,
                 )
+
+        return guild, member, None
+
+    async def _sync_guild(self, record, target, guild_id, cfg, dry_run, strip=False):
+        guild, member, skipped = await self._find_member(record, target, guild_id)
+        if member is None:
+            return skipped
 
         if strip:
             # Revocation: remove every managed role, add nothing. Unmanaged
@@ -300,6 +312,124 @@ class DiscordSynchronizer:
             added=[r.id for r in add_objects],
             removed=[r.id for r in remove_objects],
         )
+
+    # ── Clean sync ──
+
+    async def clean_sync_record(self, record, cfg=None, dry_run=False):
+        """Wipe a member's Discord roles and give back exactly what their record
+        calls for, in the main server and every branch server they are in.
+
+        Unlike a normal sync this does not stop at managed roles: everything
+        the bot is able to remove goes, including roles that are not in the
+        configuration at all — leftovers from old configurations, hand-given
+        roles, roles from other bots. That is the point of it: clearing
+        residue a normal sync deliberately leaves alone.
+
+        What Discord does not let a bot take away stays: integration and
+        server-booster roles, and any role at or above the bot's own highest
+        role. Each server is rewritten in ONE call that sets the final role
+        list, so the member is never left half-stripped between two requests.
+
+        Refuses outright when the record's rank is not configured: the result
+        would be a member stripped of everything and given nothing back.
+        """
+        cfg = cfg or roles_config.current()
+
+        if not record.discord_id:
+            return [SyncOutcome(SyncTarget.DISCORD_MAIN, False,
+                                "Record has no Discord ID; nothing to clean.")]
+        if not self.is_ready():
+            return [SyncOutcome(SyncTarget.DISCORD_MAIN, False,
+                                "Discord client is not ready.", retryable=True)]
+        if cfg.rank(record.rank_key) is None:
+            return [SyncOutcome(
+                SyncTarget.DISCORD_MAIN, False,
+                f"Rank '{record.rank_key or '(blank)'}' is not in the configuration, so "
+                f"there is no role set to rebuild. Refusing to strip their roles.",
+            )]
+
+        outcomes = []
+        for target, guild_id in self.target_guild_ids(record, cfg):
+            outcomes.append(await self._clean_guild(record, target, guild_id, cfg, dry_run))
+            await asyncio.sleep(cfg.discord.member_edit_delay)
+        return outcomes
+
+    async def _clean_guild(self, record, target, guild_id, cfg, dry_run):
+        guild, member, skipped = await self._find_member(record, target, guild_id)
+        if member is None:
+            return skipped
+
+        me = guild.me
+        if me is None:
+            return SyncOutcome(target, False, f"{guild.name}: the bot's own member is not cached.",
+                               retryable=True)
+        ceiling = me.top_role
+
+        desired, _managed = self.desired_roles(record, guild_id, cfg)
+        shared_elsewhere = cfg.shared_grant_role_ids(guild_id)
+
+        current = [role for role in member.roles if not role.is_default()]
+        # Roles the API will not let a bot remove. They have to be part of the
+        # new role list, or the whole edit is rejected.
+        kept = [role for role in current if role.managed or role >= ceiling]
+
+        wanted, missing, out_of_reach = [], [], []
+        for role_id in desired:
+            role = guild.get_role(role_id)
+            if role is None:
+                # A multi-server grantable role lists ids of its other servers too.
+                if role_id not in shared_elsewhere:
+                    missing.append(role_id)
+                continue
+            if role.managed or role >= ceiling:
+                if role not in kept:
+                    out_of_reach.append(role.name)
+                continue
+            wanted.append(role)
+
+        final = {role.id: role for role in kept + wanted}
+        held = {role.id for role in current}
+        removed = [role for role in current if role.id not in final]
+        added = [role for role in wanted if role.id not in held]
+
+        notes = []
+        if missing:
+            notes.append(f"configured role(s) not found here: {missing}")
+        if out_of_reach:
+            notes.append(f"could not give {', '.join(out_of_reach)} (above the bot's role)")
+        stuck = [role.name for role in kept]
+        if stuck:
+            notes.append(f"kept {', '.join(stuck)} (cannot be removed by a bot)")
+        note = f" — {'; '.join(notes)}" if notes else ""
+
+        if not removed and not added:
+            return SyncOutcome(target, True, f"{guild.name}: already clean{note}.")
+
+        summary = f"{guild.name}: removed {len(removed)}, gave {len(added)}"
+        if dry_run:
+            return SyncOutcome(target, True, f"Dry run — {summary}{note}.",
+                               added=[r.id for r in added], removed=[r.id for r in removed])
+
+        try:
+            await member.edit(
+                roles=list(final.values()),
+                reason="Clean role sync: roles rebuilt from the PERSONNEL sheet",
+            )
+        except discord.Forbidden:
+            return SyncOutcome(
+                target, False,
+                f"{guild.name}: missing permission to manage roles, or a role sits above "
+                f"the bot's highest role.",
+            )
+        except discord.HTTPException as exc:
+            retryable = getattr(exc, "status", 0) in (429, 500, 502, 503, 504)
+            return SyncOutcome(target, False, f"{guild.name}: Discord API error: {exc}",
+                               retryable=retryable)
+
+        print(f"[Roles:Discord] Clean sync of {record.discord_id} in {guild.name}: "
+              f"removed {[r.name for r in removed]}, gave {[r.name for r in added]}.")
+        return SyncOutcome(target, True, f"{summary}{note}.",
+                           added=[r.id for r in added], removed=[r.id for r in removed])
 
     @staticmethod
     def _resolve_roles(guild, role_ids):
@@ -414,6 +544,22 @@ class DiscordSynchronizer:
                             f"not found in {guild.name}."
                         )
 
+        for scope, role_ids in cfg.general_roles.items():
+            guild_id = cfg._scope_guild_id(scope)
+            guild = self.client.get_guild(guild_id) if guild_id else None
+            if guild is None:
+                problems.append(
+                    f"General roles for {scope}: "
+                    + ("server not configured." if not guild_id
+                       else f"bot is not in guild {guild_id}.")
+                )
+                continue
+            for role_id in role_ids:
+                if guild.get_role(role_id) is None:
+                    problems.append(
+                        f"General roles for {scope}: role {role_id} not found in {guild.name}."
+                    )
+
         for grantable in cfg.grantable_roles.values():
             guild_ids = cfg.grantable_guild_ids(grantable)
             if len(guild_ids) < len(grantable.guilds):
@@ -443,14 +589,15 @@ class DiscordSynchronizer:
                         f"Grantable role {grantable.key}: role {role_id} not found "
                         f"in {where}."
                     )
-            # A cancelled role only has an effect if a rank or branch grants it.
+            # A cancelled role only has an effect if a rank, branch or general
+            # role grants it.
             for role_id in grantable.remove_discord_role_ids:
                 owners = [g for g in guilds if g.get_role(role_id)]
                 if owners and not any(role_id in cfg.managed_role_ids(g.id) for g in owners):
                     problems.append(
                         f"Grantable role {grantable.key}: removes role {role_id}, "
-                        f"which no rank or branch grants in {owners[0].name} — it "
-                        f"has no effect."
+                        f"which no rank, branch or general role grants in "
+                        f"{owners[0].name} — it has no effect."
                     )
 
         return problems
