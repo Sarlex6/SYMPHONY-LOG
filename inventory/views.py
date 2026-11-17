@@ -647,9 +647,9 @@ class ImportLogModal(Modal):
         self.user = user
 
         self.log_input = TextInput(
-            label="One entry per line: ITEM NAME QUANTITY",
+            label="One entry per line: NAME 25 or x25 NAME",
             style=discord.TextStyle.paragraph,
-            placeholder="Iron Ore 25\nCopper Wire 10\nMed-Kit 2",
+            placeholder="Iron Ore 25\nx4 Pipe\nMed-Kit 2",
             required=True,
             max_length=4000
         )

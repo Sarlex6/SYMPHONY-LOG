@@ -4,11 +4,12 @@ Input is what people paste from their notes:
 
     Iron Ore 25
     copper-wire 10, Med Kit x3
-    5 rubies
+    x1 Shovel
+    4x Pipe
 
-An entry is an item name followed by a quantity. Entries are separated by line
-breaks, or just by whitespace: a quantity ends the entry before it. Names can
-be several words long.
+An entry is an item name and a quantity, in either order — decided per line,
+so one log can mix both. Entries are separated by line breaks, or just by
+whitespace. Names can be several words long.
 
 Matching, cheapest first, so most entries never reach the expensive part:
 
@@ -237,18 +238,109 @@ def _quantity(token):
 
 
 def _tokens(line):
+    """A line's words, with list markers, separators and filler words gone."""
     line = _LIST_MARKER.sub("", line)
     line = _SEPARATORS.sub(" ", line)
-    return line.split()
+    return [token for token in line.split() if token.casefold() not in _FILLER]
+
+
+def _quantity_first(tokens):
+    """Whether a line is written QUANTITY NAME ("x1 Shovel") rather than
+    NAME QUANTITY ("Shovel 1").
+
+    Decided by its first word. The one exception is a plain number at both
+    ends with only a name between ("3 Iron Ore 25"): that reads as a numbered
+    list, as it did before this format was supported. A marked quantity
+    ("x3 Glock 17") is never taken for a list number.
+    """
+    if not tokens or _quantity(tokens[0]) is None:
+        return False
+    if tokens[0].isdigit():
+        positions = [i for i, token in enumerate(tokens) if _quantity(token) is not None]
+        if len(positions) == 2 and positions[1] == len(tokens) - 1 and len(tokens) > 2:
+            return False
+    return True
+
+
+def _split_quantity_first(tokens):
+    """'x1 Shovel x4 Pipe' -> [('Shovel', 1), ('Pipe', 4)].
+
+    Each quantity opens a new entry. A plain number that ends the line, or is
+    followed by another quantity, belongs to the name instead ("x2 Glock 17").
+    """
+    entries, problems = [], []
+    quantity, name = None, []
+
+    def close():
+        if name:
+            entries.append((" ".join(name), quantity))
+        else:
+            problems.append(f"`{quantity}` — a quantity with no item name")
+
+    for index, token in enumerate(tokens):
+        value = _quantity(token)
+        if value is None:
+            name.append(token)
+            continue
+
+        following = tokens[index + 1] if index + 1 < len(tokens) else None
+        if name and token.isdigit() and (following is None or _quantity(following) is not None):
+            name.append(token)                          # part of the name
+            continue
+
+        if quantity is not None:
+            close()
+        quantity, name = value, []
+
+    if quantity is not None:
+        close()
+    return entries, problems
+
+
+def _split_name_first(tokens):
+    """'Iron Ore 25 Pipe 4' -> ([('Iron Ore', 25), ('Pipe', 4)], dangling name).
+
+    A quantity closes the entry in front of it. Two quantities in a row mean
+    the first belongs to the name ("Glock 17 5"). A name left at the end with
+    no quantity is returned, so the next line can supply one.
+    """
+    entries, problems = [], []
+    name, leading = [], None
+
+    for index, token in enumerate(tokens):
+        quantity = _quantity(token)
+        if quantity is None:
+            name.append(token)
+            continue
+
+        following = _quantity(tokens[index + 1]) if index + 1 < len(tokens) else None
+        if name and following is not None and token.isdigit():
+            name.append(token)                          # part of the name
+        elif name:
+            entries.append((" ".join(name), quantity))
+            name = []
+            leading = None
+        elif leading is None:
+            leading = quantity                          # a list number, or "Gas Mask\n3"
+        else:
+            problems.append(f"`{token}` — a quantity with no item name")
+
+    if name and leading is not None:
+        entries.append((" ".join(name), leading))
+        name = []
+    elif leading is not None:
+        problems.append(f"`{leading}` — a quantity with no item name")
+
+    return entries, problems, name
 
 
 def split_entries(text):
     """Text -> ([(raw_name, quantity)], [problem text]).
 
-    A quantity closes the entry in front of it. Two quantities in a row mean
-    the first belongs to the name ("Glock 17 5"). A line holding only a name
-    takes its quantity from the start of the next line. A quantity before the
-    name ("5 Iron Ore") is accepted when nothing follows the name.
+    Both orders are understood, decided line by line: NAME QUANTITY ("Iron
+    Ore 25") and QUANTITY NAME ("x1 Shovel", "4x Pipe"). Either way a line may
+    hold one entry or several. A line holding only a name takes its quantity
+    from the start of the next line.
     """
     entries, problems = [], []
     lines = str(text or "").splitlines()
@@ -258,35 +350,15 @@ def split_entries(text):
 
     carry = []   # name tokens still waiting for a quantity
     for line in lines:
-        tokens = carry + _tokens(line)
-        carry = []
-        name, leading = [], None
-
-        for index, token in enumerate(tokens):
-            quantity = _quantity(token)
-            if quantity is None:
-                if token.casefold() not in _FILLER:
-                    name.append(token)
-                continue
-
-            following = _quantity(tokens[index + 1]) if index + 1 < len(tokens) else None
-            if name and following is not None and token.isdigit():
-                name.append(token)                      # part of the name
-            elif name:
-                entries.append((" ".join(name), quantity))
-                name = []
-                leading = None
-            elif leading is None:
-                leading = quantity                      # "5 Iron Ore"
-            else:
-                problems.append(f"`{token}` — a quantity with no item name")
-
-        if name and leading is not None:
-            entries.append((" ".join(name), leading))
-        elif name:
-            carry = name                                # quantity may be on the next line
-        elif leading is not None:
-            problems.append(f"`{leading}` — a quantity with no item name")
+        tokens = _tokens(line)
+        if not carry and _quantity_first(tokens):
+            found, issues = _split_quantity_first(tokens)
+        else:
+            # A name left over from the line above is finished by this line's
+            # first quantity, so this line reads name-first.
+            found, issues, carry = _split_name_first(carry + tokens)
+        entries.extend(found)
+        problems.extend(issues)
 
     if carry:
         problems.append(f"`{' '.join(carry)}` — no quantity given")
